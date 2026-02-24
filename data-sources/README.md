@@ -19,18 +19,41 @@ Comprehensive catalog of free and open geospatial data sources for GIS professio
 
 ## Table of Contents
 
+### Foundation Geospatial Data
 - [Satellite Imagery](satellite-imagery.md) - Optical and radar imagery from Landsat, Sentinel, MODIS, and commercial providers
-- [Vector Data](vector-data.md) - OpenStreetMap, Natural Earth, government open data portals, and thematic datasets
-- [Elevation & Terrain](elevation-terrain.md) - Global DEMs, bathymetry, and LiDAR sources
-- [Administrative Boundaries](administrative-boundaries.md) - Country borders, subdivisions, and standardized boundary datasets
-- [Climate & Weather](climate-weather.md) - Reanalysis data, station observations, forecasts, and climate projections
-- [China-Specific Data](china-specific.md) - Government portals, coordinate systems, POI data, and academic sources
+- [Vector Data](vector-data.md) - OpenStreetMap, Overture Maps, Natural Earth, government open data portals, and thematic datasets
+- [Elevation & Terrain](elevation-terrain.md) - Global DEMs (Copernicus 30m, SRTM, ALOS), bathymetry, and LiDAR point clouds
+- [Administrative Boundaries](administrative-boundaries.md) - Country borders, subdivisions, GADM, Natural Earth, and standardized boundary datasets
+- [Climate & Weather](climate-weather.md) - ERA5 reanalysis, station observations, forecasts, and CMIP6 climate projections
+
+### Industry & Infrastructure
+- [Energy & Power Infrastructure](energy-power-infrastructure.md) - Power plants, transmission networks, solar/wind resources, nuclear, oil & gas, EV charging, battery storage
+- [Transportation & Autonomous Driving](transportation-autonomous-driving.md) - HD maps, traffic data, LiDAR datasets (Waymo, nuScenes, KITTI), road networks, AV simulation
+- [Telecommunications & Connectivity](telecommunications-connectivity.md) - Cell towers, broadband mapping, submarine cables, spectrum allocation, 5G deployment, satellite comms
+- [Logistics, Delivery & Urban Mobility](logistics-delivery-urban-mobility.md) - Address/geocoding, routing engines, POI, last-mile delivery, transit/GTFS, freight, food delivery, micromobility
+- [Healthcare & Public Health](healthcare-public-health.md) - Facility locations, disease surveillance, environmental health, health access modeling, demographics, EMS
+
+### Environment & Hazards
+- [Ocean & Maritime](ocean-maritime.md) - Sea surface temperature, ocean color, AIS ship tracking, ports, coastal data, tides, marine protected areas
+- [Natural Disasters & Emergency Response](natural-disasters-emergency-response.md) - Earthquakes, volcanoes, floods, wildfires, hurricanes, tsunamis, drought, multi-hazard platforms, emergency mapping
+- [Agriculture & Food Security](agriculture-food-security.md) - Crop mapping, soil data, vegetation indices, irrigation, pest monitoring, precision agriculture, food supply chains
+
+### Emerging & Specialized
+- [Space & Aerospace](space-aerospace.md) - Satellite tracking, space weather, airspace/aviation, flight tracking, drone airspace, planetary GIS, NEOs
+- [Urban Planning & Smart Cities](urban-planning-smart-cities.md) - Land use/zoning, building footprints, population, night lights, urban heat, real estate, smart city platforms
+- [ML Training Data for Geospatial](ml-training-data.md) - SpaceNet, scene classification, object detection, segmentation, foundation models, benchmarks, synthetic data
+
+### Regional
+- [China-Specific Data](china-specific.md) - Government portals, coordinate systems (GCJ-02/BD-09), POI data, and academic sources
+
+---
 
 ## Key Highlights
 
+- **18 Topic Areas**: From foundational satellite imagery to specialized autonomous driving and space data
 - **Free First**: Every section leads with free and open data sources before listing commercial options
-- **Practical Formats**: Sources are organized with resolution, coverage, format, and direct access links
+- **Detailed Entries**: Each source includes exact data contents, formats, resolution, update frequency, API details, and access method
 - **SOTA Comparison**: Includes state-of-the-art commercial alternatives so you understand the full landscape
-- **China Coverage**: Dedicated section for China-specific data sources, coordinate systems, and access methods
-- **Download Tools**: Each section includes recommended tools and platforms for data access and processing
+- **Quick Picks**: Every page has SOTA, Free Best, and Fastest Setup recommendations
+- **Recommended Tools**: Each section lists relevant Python libraries, desktop tools, and web platforms
 - **Cloud-Native**: Emphasis on STAC catalogs, COG, GeoParquet, and other cloud-optimized formats for modern workflows
