@@ -1,34 +1,72 @@
-# Deployment
+# Deployment — 2025 Complete Guide
 
-Taking a GIS application from development to production involves containerization, infrastructure choices, CI/CD pipelines, and monitoring. This guide covers deployment strategies from simple Docker setups to scalable cloud architectures.
+Taking a GIS application from development to production involves containerization, infrastructure choices, CI/CD pipelines, monitoring, and disaster recovery. This guide covers deployment strategies from simple Docker setups to scalable cloud architectures.
 
 > **Quick Picks**
-> - **Cheapest deployment:** PMTiles on Cloudflare R2 + frontend on Vercel/Netlify
-> - **Full-stack local dev:** Docker Compose (PostGIS + Martin + Frontend)
-> - **Production small team:** Docker Compose on a $20/mo VPS
-> - **Production at scale:** Kubernetes with managed PostGIS (RDS/Cloud SQL)
+> - **Cheapest:** PMTiles on Cloudflare R2 + frontend on Vercel ($0-5/mo)
+> - **Full-stack dev:** Docker Compose (PostGIS + Martin + Frontend)
+> - **Small team production:** Docker Compose on $20/mo VPS
+> - **Scale:** Kubernetes with managed PostGIS (RDS/Cloud SQL)
 > - **Serverless raster:** Lambda + TiTiler + S3 COGs
 
 ---
 
-## Docker for GIS Stack
+## Docker for GIS
 
-Docker simplifies deploying the GIS stack by packaging each service with its dependencies.
+### Production Dockerfiles
 
-### Common GIS Docker Images
+```dockerfile
+# PostGIS with extensions — Dockerfile.postgis
+FROM postgis/postgis:16-3.4
+RUN apt-get update && apt-get install -y \
+    postgresql-16-pgrouting \
+    postgresql-16-h3 \
+    postgresql-16-ogr-fdw \
+  && rm -rf /var/lib/apt/lists/*
 
-| Image | Purpose | Base |
-|-------|---------|------|
-| `postgis/postgis` | PostgreSQL + PostGIS | Debian |
-| `kartoza/geoserver` | GeoServer with plugins | Ubuntu |
-| `ghcr.io/maplibre/martin` | Martin tile server | Alpine |
-| `pramsey/pg_tileserv` | pg_tileserv | Alpine |
-| `pelias/api` | Pelias geocoding API | Node |
-| `osrm/osrm-backend` | OSRM routing engine | Debian |
+COPY init.sql /docker-entrypoint-initdb.d/
+HEALTHCHECK --interval=10s --timeout=5s --retries=5 \
+  CMD pg_isready -U $POSTGRES_USER -d $POSTGRES_DB
+```
 
-### Example Docker Compose
+```dockerfile
+# Next.js frontend — Dockerfile.frontend (multi-stage)
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+
+USER node
+EXPOSE 3000
+CMD ["node", "server.js"]
+```
+
+```dockerfile
+# FastAPI spatial API — Dockerfile.api
+FROM python:3.12-slim
+RUN apt-get update && apt-get install -y libgdal-dev && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+USER nobody
+EXPOSE 8000
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+```
+
+### Docker Compose — Minimal Stack
 
 ```yaml
+# docker-compose.yml — PostGIS + Martin + Frontend
 version: '3.8'
 services:
   postgis:
@@ -39,30 +77,41 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
     volumes:
       - pgdata:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gisuser -d gisdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   martin:
     image: ghcr.io/maplibre/martin
     environment:
       DATABASE_URL: postgresql://gisuser:${DB_PASSWORD}@postgis/gisdb
-    ports:
-      - "3000:3000"
+    ports: ["3000:3000"]
     depends_on:
-      - postgis
+      postgis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 10s
 
   frontend:
     build: ./frontend
-    ports:
-      - "8080:80"
+    ports: ["8080:3000"]
+    environment:
+      NEXT_PUBLIC_TILE_URL: http://localhost:3000
+    depends_on:
+      martin: { condition: service_healthy }
 
 volumes:
   pgdata:
 ```
 
-### Full Docker Compose: PostGIS + Martin + Frontend + GeoServer
+### Docker Compose — Full Stack with Monitoring
 
 ```yaml
+# docker-compose.prod.yml
 version: '3.8'
 services:
   postgis:
@@ -71,304 +120,839 @@ services:
       POSTGRES_DB: gisdb
       POSTGRES_USER: gisuser
       POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_INITDB_ARGS: "--data-checksums"
     volumes:
       - pgdata:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+      - ./postgresql.conf:/etc/postgresql/postgresql.conf
+      - ./backups:/backups
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    deploy:
+      resources:
+        limits: { memory: 4G, cpus: '2' }
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gisuser -d gisdb"]
+      interval: 10s
 
   martin:
     image: ghcr.io/maplibre/martin
-    environment:
-      DATABASE_URL: postgresql://gisuser:${DB_PASSWORD}@postgis/gisdb
-    ports:
-      - "3000:3000"
+    volumes:
+      - ./martin-config.yaml:/config.yaml
+      - ./data/tiles:/data/tiles
+    command: ["--config", "/config.yaml"]
+    deploy:
+      resources:
+        limits: { memory: 1G, cpus: '2' }
     depends_on:
-      - postgis
+      postgis: { condition: service_healthy }
 
-  geoserver:
-    image: kartoza/geoserver:2.24.1
-    environment:
-      GEOSERVER_ADMIN_PASSWORD: ${GS_PASSWORD}
-    ports:
-      - "8080:8080"
+  caddy:
+    image: caddy:2-alpine
+    ports: ["80:80", "443:443"]
     volumes:
-      - gs_data:/opt/geoserver/data_dir
-
-  osrm:
-    image: osrm/osrm-backend
-    command: osrm-routed --algorithm mld /data/map.osrm
-    volumes:
-      - ./osrm-data:/data
-    ports:
-      - "5001:5000"
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [frontend, martin]
 
   frontend:
     build: ./frontend
-    ports:
-      - "80:80"
+    environment:
+      DATABASE_URL: postgresql://gisuser:${DB_PASSWORD}@postgis/gisdb
+      MARTIN_URL: http://martin:3000
+
+  # Monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports: ["9090:9090"]
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards
+    ports: ["3001:3000"]
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    environment:
+      DATA_SOURCE_NAME: postgresql://gisuser:${DB_PASSWORD}@postgis/gisdb?sslmode=disable
     depends_on:
-      - martin
+      postgis: { condition: service_healthy }
+
+  # Backup
+  backup:
+    image: prodrigestivill/postgres-backup-local:latest
+    environment:
+      POSTGRES_HOST: postgis
+      POSTGRES_DB: gisdb
+      POSTGRES_USER: gisuser
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      SCHEDULE: "@daily"
+      BACKUP_KEEP_DAYS: 7
+      BACKUP_KEEP_WEEKS: 4
+    volumes:
+      - ./backups:/backups
+    depends_on:
+      postgis: { condition: service_healthy }
 
 volumes:
   pgdata:
-  gs_data:
+  caddy_data:
+  caddy_config:
+  prometheus_data:
+  grafana_data:
 ```
 
----
-
-## Kubernetes / Cloud Deployment
-
-For production workloads requiring high availability and auto-scaling.
-
-### Architecture
-
 ```
-┌─────────────────────────────────────────────┐
-│  Kubernetes Cluster                         │
-│                                             │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐ │
-│  │ Frontend  │  │  Tile    │  │  API     │ │
-│  │ Deployment│  │  Server  │  │  Server  │ │
-│  │ (3 pods)  │  │ (3 pods) │  │ (3 pods) │ │
-│  └─────┬─────┘  └─────┬────┘  └─────┬────┘ │
-│        │              │             │       │
-│  ┌─────▼──────────────▼─────────────▼────┐  │
-│  │            Ingress / Load Balancer     │  │
-│  └───────────────────────────────────────┘  │
-│                                             │
-│  ┌──────────────────┐  ┌────────────────┐  │
-│  │  PostGIS StatefulSet │  │  Redis Cache  │  │
-│  │  (primary + replica) │  │  (3 pods)     │  │
-│  └──────────────────┘  └────────────────┘  │
-└─────────────────────────────────────────────┘
-```
+# Caddyfile — Auto HTTPS reverse proxy
+example.com {
+    # Tiles with aggressive caching
+    handle /tiles/* {
+        reverse_proxy martin:3000
+        header Cache-Control "public, max-age=86400, stale-while-revalidate=604800"
+        header Access-Control-Allow-Origin "*"
+    }
 
-### Cloud Provider Options
+    # API
+    handle /api/* {
+        reverse_proxy frontend:3000
+    }
 
-| Provider | Managed Database | Object Storage | CDN | Compute |
-|----------|-----------------|----------------|-----|---------|
-| AWS | RDS for PostgreSQL | S3 | CloudFront | ECS / EKS |
-| GCP | Cloud SQL | GCS | Cloud CDN | GKE / Cloud Run |
-| Azure | Azure Database | Blob Storage | Azure CDN | AKS / Container Apps |
+    # Frontend
+    handle {
+        reverse_proxy frontend:3000
+    }
 
-### Terraform Example (AWS RDS + ECS)
+    # Security headers
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
 
-```hcl
-resource "aws_db_instance" "postgis" {
-  engine               = "postgres"
-  engine_version       = "16"
-  instance_class       = "db.t3.medium"
-  allocated_storage    = 100
-  db_name              = "gisdb"
-  username             = var.db_user
-  password             = var.db_password
-  publicly_accessible  = false
-}
-
-resource "aws_ecs_service" "martin" {
-  name            = "martin-tiles"
-  cluster         = aws_ecs_cluster.main.id
-  task_definition = aws_ecs_task_definition.martin.arn
-  desired_count   = 2
-  launch_type     = "FARGATE"
+    # Compression
+    encode zstd gzip
 }
 ```
 
----
-
-## Serverless GIS
-
-Serverless architectures minimize infrastructure management and scale to zero when idle.
-
-### Lambda + S3 COG
-
-Serve raster data from Cloud Optimized GeoTIFFs on S3 using serverless compute.
-
-```
-Client  ──▶  API Gateway  ──▶  Lambda (TiTiler)  ──▶  S3 (COG files)
-```
-
-- **Pros**: Scale to zero, pay-per-request, no server management
-- **Cons**: Cold starts, limited execution time, complex debugging
-
-### Cloud Functions + GeoParquet
-
-Process vector data from GeoParquet files on cloud storage.
-
-### Serverless Use Cases
-
-| Use Case | Architecture | Cost Profile |
-|----------|-------------|-------------|
-| Raster tile serving | Lambda + S3 COG + TiTiler | Low (pay per request) |
-| Vector tile serving | CDN + PMTiles | Very Low (storage + CDN) |
-| Geocoding API | Cloud Function + Pelias | Low-Medium |
-| Geoprocessing jobs | Step Functions + Lambda | Variable |
-
-### PMTiles on Cloudflare R2 (Cheapest Deployment)
-
-Cloudflare R2 offers free egress, making it ideal for serving PMTiles globally.
-
-**Setup:**
-1. Create an R2 bucket in Cloudflare dashboard
-2. Upload your `.pmtiles` file
-3. Set CORS headers: `Access-Control-Allow-Origin: *`
-4. Enable public access or use a Worker for custom routing
-5. Use the PMTiles JS library in MapLibre to read tiles via range requests
-
-**Cost:** Free for most use cases (10 GB storage free, no egress charges).
-
-### Vercel/Netlify for Frontend + CDN Tiles
-
-Deploy your frontend (Next.js, Vite, SvelteKit) to Vercel or Netlify. Serve tiles from R2/S3.
-
-```
-Frontend (Vercel)  -->  Tile Source (R2/S3 PMTiles)
-     |                       |
-     v                       v
-  Next.js app          Range requests
-  SSR/SSG              No server needed
-  API routes           Global CDN
-```
-
----
-
-## Static Map Hosting
-
-The simplest and cheapest deployment option: pre-generate tiles and host them on static infrastructure.
-
-### PMTiles + CDN
-
-PMTiles is a single-file tile archive format that supports HTTP range requests, making it ideal for static hosting.
-
-```
-┌──────────┐     Range Requests     ┌──────────┐
-│  Browser  │  ───────────────────▶  │  CDN /   │
-│ (MapLibre │                        │  S3      │
-│  + pmtiles│                        │ (.pmtiles│
-│  protocol)│  ◀───────────────────  │  file)   │
-└──────────┘     Tile Bytes          └──────────┘
-```
-
-**Steps:**
-1. Generate PMTiles with tippecanoe: `tippecanoe -o tiles.pmtiles input.geojson`
-2. Upload to S3 / GCS / R2 with CORS headers
-3. Point MapLibre to the PMTiles URL using the pmtiles protocol
-
-- **Pros**: No server, no database, extremely cheap, globally fast via CDN
-- **Cons**: Static data only, requires regeneration on updates
-
-### Static Hosting Providers
-
-| Provider | Free Tier | Best For |
-|----------|-----------|----------|
-| Cloudflare R2 | 10 GB storage, free egress | PMTiles, static assets |
-| AWS S3 + CloudFront | 5 GB storage | Full-featured CDN |
-| GitHub Pages | 1 GB storage | Small demos, prototypes |
-| Netlify / Vercel | 100 GB bandwidth | Frontend + PMTiles |
-
-
----
-
-## CI/CD for GIS Projects
-
-### Pipeline Stages
-
-```
-Code Push  ──▶  Lint/Test  ──▶  Build  ──▶  Deploy  ──▶  Validate
-                  │                │           │            │
-              Unit tests       Docker      Staging      Smoke tests
-              Linting          images      then Prod    Tile checks
-              Type check       Tile gen                 API health
-```
-
-### GIS-Specific CI Checks
-
-- Validate GeoJSON schema and geometry validity
-- Run spatial query tests against a PostGIS test database
-- Check tile generation output (size, zoom levels, coverage)
-- Verify CRS consistency across data sources
-- Lint map styles (MapLibre style spec validation)
-
-### GitHub Actions Workflow Example
+### Docker Security
 
 ```yaml
+# Security best practices
+services:
+  martin:
+    image: ghcr.io/maplibre/martin
+    read_only: true                    # Read-only filesystem
+    security_opt:
+      - no-new-privileges:true         # No privilege escalation
+    cap_drop:
+      - ALL                            # Drop all Linux capabilities
+    tmpfs:
+      - /tmp                           # Writable tmp in memory
+
+  postgis:
+    image: postgis/postgis:16-3.4
+    security_opt:
+      - no-new-privileges:true
+    # Never expose DB port in production
+    # ports: ["5432:5432"]  # REMOVE THIS
+```
+
+---
+
+## Kubernetes
+
+### K8s Manifests — PostGIS StatefulSet
+
+```yaml
+# postgis-statefulset.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgis
+spec:
+  serviceName: postgis
+  replicas: 1
+  selector:
+    matchLabels: { app: postgis }
+  template:
+    metadata:
+      labels: { app: postgis }
+    spec:
+      containers:
+        - name: postgis
+          image: postgis/postgis:16-3.4
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: gisdb
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef: { name: postgis-secret, key: username }
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: postgis-secret, key: password }
+          resources:
+            requests: { memory: "2Gi", cpu: "1" }
+            limits: { memory: "4Gi", cpu: "2" }
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "gisuser", "-d", "gisdb"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "gisuser", "-d", "gisdb"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+  volumeClaimTemplates:
+    - metadata: { name: pgdata }
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests: { storage: 100Gi }
+        storageClassName: gp3
+```
+
+### Martin Deployment with HPA
+
+```yaml
+# martin-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: martin
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: martin }
+  template:
+    metadata:
+      labels: { app: martin }
+    spec:
+      containers:
+        - name: martin
+          image: ghcr.io/maplibre/martin
+          ports: [{ containerPort: 3000 }]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: postgis-secret, key: url }
+          resources:
+            requests: { memory: "256Mi", cpu: "250m" }
+            limits: { memory: "512Mi", cpu: "1" }
+          livenessProbe:
+            httpGet: { path: /health, port: 3000 }
+            initialDelaySeconds: 10
+          readinessProbe:
+            httpGet: { path: /health, port: 3000 }
+            initialDelaySeconds: 5
+---
+# martin-hpa.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: martin-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: martin
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }
+    - type: Resource
+      resource:
+        name: memory
+        target: { type: Utilization, averageUtilization: 80 }
+```
+
+### Ingress — Path-Based Routing
+
+```yaml
+# ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gis-ingress
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-buffering: "on"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      add_header Cache-Control "public, max-age=86400" always;
+spec:
+  tls:
+    - hosts: [gis.example.com]
+      secretName: gis-tls
+  rules:
+    - host: gis.example.com
+      http:
+        paths:
+          - path: /tiles
+            pathType: Prefix
+            backend:
+              service: { name: martin, port: { number: 3000 } }
+          - path: /api
+            pathType: Prefix
+            backend:
+              service: { name: api, port: { number: 8000 } }
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: frontend, port: { number: 3000 } }
+```
+
+### Backup CronJob
+
+```yaml
+# backup-cronjob.yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgis-backup
+spec:
+  schedule: "0 2 * * *"  # 2 AM daily
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: backup
+              image: postgres:16-alpine
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+                  pg_dump -Fc $DATABASE_URL > /backups/gisdb_${TIMESTAMP}.dump
+                  # Keep last 7 days
+                  find /backups -name "*.dump" -mtime +7 -delete
+                  # Upload to S3
+                  aws s3 cp /backups/gisdb_${TIMESTAMP}.dump s3://backups/postgis/
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef: { name: postgis-secret, key: url }
+              volumeMounts:
+                - name: backups
+                  mountPath: /backups
+          volumes:
+            - name: backups
+              persistentVolumeClaim: { claimName: backup-pvc }
+          restartPolicy: OnFailure
+```
+
+---
+
+## Serverless & Edge
+
+### AWS Lambda + TiTiler — SAM Template
+
+```yaml
+# template.yaml (AWS SAM)
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 1536
+    Runtime: python3.12
+    Environment:
+      Variables:
+        GDAL_CACHEMAX: 512
+        GDAL_DISABLE_READDIR_ON_OPEN: EMPTY_DIR
+        VSI_CACHE: "TRUE"
+        VSI_CACHE_SIZE: 536870912
+
+Resources:
+  TiTilerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: handler.handler
+      CodeUri: ./src
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            Path: /{proxy+}
+            Method: ANY
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref COGBucket
+
+  COGBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: gis-cog-data
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins: ["*"]
+            AllowedMethods: [GET, HEAD]
+            AllowedHeaders: ["*"]
+
+Outputs:
+  ApiUrl:
+    Value: !Sub "https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+```
+
+### Cloudflare Workers + R2 — PMTiles at the Edge
+
+```javascript
+// worker.js — Serve PMTiles from R2 at the edge
+import { PMTiles } from 'pmtiles';
+
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    const path = url.pathname;
+
+    // CORS preflight
+    if (request.method === 'OPTIONS') {
+      return new Response(null, {
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, HEAD',
+          'Access-Control-Allow-Headers': 'Range',
+        },
+      });
+    }
+
+    // Parse tile request: /tiles/{name}/{z}/{x}/{y}.mvt
+    const match = path.match(/^\/tiles\/(\w+)\/(\d+)\/(\d+)\/(\d+)\.(mvt|pbf)$/);
+    if (!match) {
+      return new Response('Not found', { status: 404 });
+    }
+
+    const [, name, z, x, y] = match;
+
+    // Open PMTiles from R2
+    const pmtiles = new PMTiles(
+      new R2Source(env.TILES_BUCKET, `${name}.pmtiles`)
+    );
+
+    const tile = await pmtiles.getZxy(Number(z), Number(x), Number(y));
+    if (!tile?.data) {
+      return new Response('', { status: 204 });
+    }
+
+    return new Response(tile.data, {
+      headers: {
+        'Content-Type': 'application/x-protobuf',
+        'Cache-Control': 'public, max-age=86400',
+        'Access-Control-Allow-Origin': '*',
+      },
+    });
+  },
+};
+
+class R2Source {
+  constructor(bucket, key) {
+    this.bucket = bucket;
+    this.key = key;
+  }
+
+  async getBytes(offset, length) {
+    const obj = await this.bucket.get(this.key, {
+      range: { offset, length },
+    });
+    const data = await obj.arrayBuffer();
+    return { data: new Uint8Array(data) };
+  }
+}
+```
+
+### Supabase — Full Platform
+
+```sql
+-- Supabase: Enable PostGIS
+CREATE EXTENSION IF NOT EXISTS postgis;
+
+-- Create spatial table
+CREATE TABLE features (
+    id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    category TEXT,
+    geom GEOMETRY(Geometry, 4326),
+    created_by UUID REFERENCES auth.users(id),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Spatial index
+CREATE INDEX idx_features_geom ON features USING GIST (geom);
+
+-- Row Level Security (spatial)
+ALTER TABLE features ENABLE ROW LEVEL SECURITY;
+
+-- Users can only see features in their assigned region
+CREATE POLICY "Users see features in their region"
+ON features FOR SELECT
+USING (
+    ST_Within(
+        geom,
+        (SELECT region_geom FROM user_regions WHERE user_id = auth.uid())
+    )
+);
+
+-- RPC function for spatial queries
+CREATE FUNCTION features_in_bbox(min_lng float, min_lat float, max_lng float, max_lat float)
+RETURNS json AS $$
+    SELECT json_build_object(
+        'type', 'FeatureCollection',
+        'features', COALESCE(json_agg(json_build_object(
+            'type', 'Feature',
+            'properties', json_build_object('id', id, 'name', name, 'category', category),
+            'geometry', ST_AsGeoJSON(geom)::json
+        )), '[]'::json)
+    )
+    FROM features
+    WHERE geom && ST_MakeEnvelope(min_lng, min_lat, max_lng, max_lat, 4326)
+    LIMIT 5000;
+$$ LANGUAGE sql STABLE;
+```
+
+### Cost Comparison
+
+| Stack | 1K/day | 10K/day | 100K/day |
+|-------|--------|---------|----------|
+| Docker Compose (VPS) | $10-20 | $40-80 | N/A |
+| Kubernetes (AWS/GCP) | $100-200 | $200-500 | $500-2000 |
+| Serverless (Lambda) | $5-15 | $30-100 | $200-800 |
+| Static (PMTiles+CDN) | $0-5 | $5-15 | $15-50 |
+| Supabase | $0-25 | $25-100 | $100-400 |
+| Managed (Mapbox/CARTO) | $0-100 | $200-500 | $1000-5000 |
+
+---
+
+## CI/CD for GIS
+
+### GitHub Actions — Complete Workflow
+
+```yaml
+# .github/workflows/gis-ci.yml
 name: GIS CI/CD
-on: [push]
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
 jobs:
-  test-and-deploy:
+  test:
     runs-on: ubuntu-latest
     services:
       postgis:
         image: postgis/postgis:16-3.4
         env:
           POSTGRES_DB: testdb
-          POSTGRES_PASSWORD: testpass
-        ports:
-          - 5432:5432
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U test -d testdb"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with: { node-version: '20' }
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npm run typecheck
+
       - name: Run spatial tests
+        run: npm test
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/testdb
+
+      - name: Validate map styles
         run: |
-          pip install geopandas pytest sqlalchemy geoalchemy2
-          pytest tests/
-      - name: Build frontend
-        run: cd frontend && npm ci && npm run build
-      - name: Deploy to Vercel
-        if: github.ref == 'refs/heads/main'
-        run: npx vercel --prod --token=${{ secrets.VERCEL_TOKEN }}
+          npx @maplibre/maplibre-gl-style-spec validate src/styles/*.json
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          push: ${{ github.ref == 'refs/heads/main' }}
+          tags: ghcr.io/${{ github.repository }}/app:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  generate-tiles:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tippecanoe
+        run: |
+          sudo apt-get update && sudo apt-get install -y git build-essential libsqlite3-dev zlib1g-dev
+          git clone https://github.com/felt/tippecanoe.git
+          cd tippecanoe && make -j && sudo make install
+
+      - name: Generate tiles
+        run: |
+          tippecanoe -o tiles/buildings.pmtiles \
+            --minimum-zoom=2 --maximum-zoom=14 \
+            --drop-densest-as-needed \
+            data/buildings.geojson
+
+      - name: Upload to R2
+        run: |
+          rclone copy tiles/ r2:${{ secrets.R2_BUCKET }}/tiles/
+        env:
+          RCLONE_CONFIG_R2_TYPE: s3
+          RCLONE_CONFIG_R2_PROVIDER: Cloudflare
+          RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY }}
+          RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_KEY }}
+          RCLONE_CONFIG_R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+
+  deploy:
+    needs: [build, generate-tiles]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to VPS
+        run: |
+          ssh ${{ secrets.DEPLOY_HOST }} "
+            cd /opt/gis-app &&
+            docker compose pull &&
+            docker compose up -d --remove-orphans &&
+            docker system prune -f
+          "
+
+      - name: Smoke test
+        run: |
+          sleep 10
+          curl -sf https://gis.example.com/health || exit 1
+          curl -sf https://gis.example.com/tiles/buildings/12/3421/1564 -o /dev/null || exit 1
+```
+
+### Database Migrations
+
+```bash
+# Using golang-migrate
+# Create migration
+migrate create -ext sql -dir migrations add_buildings_table
+
+# migrations/000001_add_buildings_table.up.sql
+CREATE EXTENSION IF NOT EXISTS postgis;
+
+CREATE TABLE buildings (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    height FLOAT,
+    type TEXT,
+    geom GEOMETRY(Polygon, 4326)
+);
+
+CREATE INDEX idx_buildings_geom ON buildings USING GIST (geom);
+
+# Run migrations
+migrate -path migrations -database "${DATABASE_URL}" up
 ```
 
 ---
 
-## Monitoring and Observability
+## Monitoring & Observability
 
-### Key Metrics
+### Prometheus + Grafana Dashboards
 
-| Metric | Target | Tool |
-|--------|--------|------|
-| Tile response time (p95) | < 200ms cached, < 1s uncached | Prometheus + Grafana |
-| API response time (p95) | < 500ms | Prometheus + Grafana |
-| Error rate | < 1% | Sentry, Datadog |
-| Database connection pool usage | < 80% | pg_stat_activity |
-| Tile cache hit ratio | > 90% | CDN analytics |
-| Frontend FPS | > 30fps during interaction | Real User Monitoring |
+```yaml
+# prometheus.yml
+global:
+  scrape_interval: 15s
 
-### Logging
+scrape_configs:
+  - job_name: 'martin'
+    static_configs:
+      - targets: ['martin:3000']
+    metrics_path: /metrics
 
-- Structured JSON logs with request metadata (bbox, zoom, layer)
-- Slow query logging in PostGIS (`log_min_duration_statement`)
-- Tile server access logs with response sizes
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
 
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node-exporter:9100']
+
+  - job_name: 'caddy'
+    static_configs:
+      - targets: ['caddy:2019']
+```
+
+### Key Metrics & Alerts
+
+```yaml
+# alerting rules
+groups:
+  - name: gis-alerts
+    rules:
+      - alert: HighTileLatency
+        expr: histogram_quantile(0.95, rate(tile_request_duration_seconds_bucket[5m])) > 1
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "Tile latency p95 > 1s" }
+
+      - alert: PostGISConnectionsHigh
+        expr: pg_stat_activity_count > 80
+        for: 5m
+        labels: { severity: critical }
+        annotations: { summary: "PostGIS connections > 80%" }
+
+      - alert: DiskSpaceLow
+        expr: node_filesystem_avail_bytes{mountpoint="/var/lib/postgresql"} / node_filesystem_size_bytes < 0.1
+        for: 10m
+        labels: { severity: critical }
+        annotations: { summary: "PostGIS disk space < 10%" }
+
+      - alert: TileErrorRate
+        expr: rate(tile_request_errors_total[5m]) / rate(tile_request_total[5m]) > 0.05
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "Tile error rate > 5%" }
+```
+
+### OpenTelemetry Tracing
+
+```python
+# Trace a spatial request end-to-end
+from opentelemetry import trace
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.instrumentation.asyncpg import AsyncPGInstrumentor
+
+tracer = trace.get_tracer(__name__)
+
+FastAPIInstrumentor.instrument_app(app)
+AsyncPGInstrumentor().instrument()
+
+@app.get("/features")
+async def get_features(bbox: str):
+    with tracer.start_as_current_span("get_features") as span:
+        span.set_attribute("bbox", bbox)
+        span.set_attribute("service", "feature-api")
+
+        with tracer.start_as_current_span("parse_bbox"):
+            coords = [float(c) for c in bbox.split(",")]
+
+        with tracer.start_as_current_span("query_postgis"):
+            result = await db.fetch(...)
+            span.set_attribute("feature_count", len(result))
+
+        with tracer.start_as_current_span("build_geojson"):
+            geojson = build_feature_collection(result)
+
+        return geojson
+```
 
 ---
 
-## Cost Optimization Tips
+## Disaster Recovery & Backup
 
-- **Use PMTiles + CDN** for static data instead of running tile servers
-- **Right-size containers**: PostGIS needs memory; tile servers need CPU
-- **Cache aggressively**: tiles rarely change, set long Cache-Control headers
-- **Use spot/preemptible instances** for batch geoprocessing
-- **Compress everything**: ZSTD for COGs, gzip/brotli for vector tiles
-- **Scale to zero**: use serverless for infrequent workloads
-- **Monitor egress**: CDN egress costs can surprise; use Cloudflare R2 for free egress
+### PostGIS Backup Strategy
+
+```bash
+#!/bin/bash
+# backup.sh — Comprehensive PostGIS backup
+
+DB_URL="postgresql://gisuser:pass@localhost/gisdb"
+BACKUP_DIR="/backups"
+S3_BUCKET="s3://gis-backups"
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+
+# 1. Custom format dump (most flexible)
+pg_dump -Fc -f "${BACKUP_DIR}/gisdb_${TIMESTAMP}.dump" "${DB_URL}"
+
+# 2. Verify backup
+pg_restore --list "${BACKUP_DIR}/gisdb_${TIMESTAMP}.dump" > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+    echo "ERROR: Backup verification failed"
+    exit 1
+fi
+
+# 3. Upload to S3
+aws s3 cp "${BACKUP_DIR}/gisdb_${TIMESTAMP}.dump" "${S3_BUCKET}/daily/"
+
+# 4. Cleanup old local backups (keep 7 days)
+find "${BACKUP_DIR}" -name "*.dump" -mtime +7 -delete
+
+# 5. WAL archiving for point-in-time recovery
+# postgresql.conf:
+#   archive_mode = on
+#   archive_command = 'aws s3 cp %p s3://gis-backups/wal/%f'
+```
+
+### Multi-Region Deployment
+
+```
+                    ┌──────────────┐
+                    │  DNS (Route53 │
+                    │  / Cloudflare)│
+                    └──────┬───────┘
+                           │
+              ┌────────────┼────────────┐
+              │            │            │
+       ┌──────▼──┐  ┌─────▼─────┐  ┌──▼────────┐
+       │ US-East │  │ EU-West   │  │ AP-East   │
+       │ Region  │  │ Region    │  │ Region    │
+       │         │  │           │  │           │
+       │ Martin  │  │ Martin    │  │ Martin    │
+       │ App     │  │ App       │  │ App       │
+       │ PostGIS │  │ PostGIS   │  │ PostGIS   │
+       │ (primary│  │ (replica) │  │ (replica) │
+       └─────────┘  └───────────┘  └───────────┘
+              │                         ▲
+              └─────── WAL replication ──┘
+```
 
 ---
 
 ## Deployment Comparison
 
-| Approach | Complexity | Cost | Scale | Best For |
-|----------|-----------|------|-------|----------|
-| Docker Compose (single server) | Low | Low | Limited | Small teams, dev/staging |
-| Kubernetes | High | Medium-High | High | Enterprise, multi-service |
-| Serverless (Lambda + S3) | Medium | Low-Variable | Auto | Bursty workloads |
-| Static (PMTiles + CDN) | Very Low | Very Low | Global | Static tile datasets |
-| Managed services (Mapbox, CARTO) | Low | High | High | Fast time-to-market |
-### Cost Estimates at Scale
-
-| Approach | 1K users/day | 10K users/day | 100K users/day |
-|---|---|---|---|
-| Docker Compose (VPS) | $10-20/mo | $40-80/mo | Not recommended |
-| Kubernetes (cloud) | $100-200/mo | $200-500/mo | $500-2000/mo |
-| Serverless (Lambda) | $5-15/mo | $30-100/mo | $200-800/mo |
-| Static (PMTiles + CDN) | $0-5/mo | $5-15/mo | $15-50/mo |
-| Managed (Mapbox/CARTO) | $0-100/mo | $200-500/mo | $1000-5000/mo |
+| Approach | Complexity | Cost | Scale | Recovery | Best For |
+|----------|-----------|------|-------|----------|----------|
+| Docker Compose (VPS) | Low | $10-40/mo | Limited | Manual | Small teams |
+| Kubernetes | High | $100-2000/mo | High | Automated | Enterprise |
+| Serverless | Medium | $0-800/mo | Auto | Built-in | Bursty workloads |
+| Static (PMTiles+CDN) | Very Low | $0-50/mo | Global | N/A | Static data |
+| Supabase | Low | $0-400/mo | Medium | Built-in | Rapid prototyping |
