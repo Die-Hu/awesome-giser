@@ -1,107 +1,182 @@
+<div align="center">
+
 # Awesome GISer
 
-A curated knowledge base for GIS professionals — data sources, spatial analysis, web mapping, visualization, and academic publishing.
+**GitHub 上最全的 GIS 知识库**&ensp;/&ensp;**The most comprehensive GIS knowledge base on GitHub**
 
 [![Awesome](https://awesome.re/badge.svg)](https://awesome.re)
 [![License: CC BY 4.0](https://img.shields.io/badge/License-CC_BY_4.0-lightgrey.svg)](https://creativecommons.org/licenses/by/4.0/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![Modules](https://img.shields.io/badge/Modules-8-blue.svg)](#modules)
+[![Pages](https://img.shields.io/badge/Pages-80+-green.svg)](#modules)
 
-Eight modules, 80+ reference pages. Each page is a self-contained deep-dive — not a link list, but working knowledge with code, comparisons, and field-tested patterns.
+<br>
 
----
+<img src="assets/demo.gif" alt="Awesome GISer — project walkthrough" width="720">
 
-## Contents
+<br>
 
-- [Data Sources](#data-sources)
-- [Tools](#tools)
-- [JS Bindbox](#js-bindbox)
-- [AI Prompts](#ai-prompts)
-- [Visualization](#visualization)
-- [Data Analysis](#data-analysis)
-- [Web Dev](#web-dev)
-- [Academic](#academic)
+**8 modules &middot; 80+ deep-dive pages &middot; Not a link list — working knowledge with code, comparisons & field-tested patterns**
 
----
+*Data &rarr; Analysis &rarr; Visualization &rarr; Publishing — with AI at every step*
 
-### Data Sources
+</div>
 
-> Free and open geospatial datasets. Every entry includes format, resolution, update frequency, and access method.
+<br>
 
-**Core:** [Satellite Imagery](data-sources/satellite-imagery.md) · [Vector Data](data-sources/vector-data.md) · [Elevation & Terrain](data-sources/elevation-terrain.md) · [Administrative Boundaries](data-sources/administrative-boundaries.md) · [Climate & Weather](data-sources/climate-weather.md) · [China-Specific](data-sources/china-specific.md) · [ML Training Data](data-sources/ml-training-data.md)
+## Why This Repo
 
-**Domain:** [Urban Planning](data-sources/urban-planning-smart-cities.md) · [Transportation](data-sources/transportation-autonomous-driving.md) · [Healthcare](data-sources/healthcare-public-health.md) · [Agriculture](data-sources/agriculture-food-security.md) · [Natural Disasters](data-sources/natural-disasters-emergency-response.md) · [Ocean & Maritime](data-sources/ocean-maritime.md) · [Energy](data-sources/energy-power-infrastructure.md) · [Telecom](data-sources/telecommunications-connectivity.md) · [Logistics](data-sources/logistics-delivery-urban-mobility.md) · [Space & Aerospace](data-sources/space-aerospace.md)
-
-### Tools
-
-> Desktop GIS, spatial databases, CLI pipelines, cloud platforms, and programming libraries — with side-by-side comparisons.
-
-[Desktop GIS](tools/desktop-gis.md) · [Mobile GIS](tools/mobile-gis.md) · [CLI Tools](tools/cli-tools.md) · [Spatial Databases](tools/spatial-databases.md) · [Server & Publishing](tools/server-publishing.md) · [Cloud Platforms](tools/cloud-platforms.md) · [Python Libraries](tools/python-libraries.md) · [Web Mapping](tools/web-mapping.md) · [Remote Sensing](tools/remote-sensing.md) · [AI/ML Geospatial](tools/ai-ml-geospatial.md) · [3D Visualization](tools/3d-visualization.md) · [Geocoding & Routing](tools/geocoding-routing.md) · [ETL & Data Engineering](tools/etl-data-engineering.md)
-
-### JS Bindbox
-
-> JavaScript geospatial libraries in depth — rendering internals, migration guides, performance profiles, and production patterns.
-
-[2D Mapping](js-bindbox/2d-mapping.md) (Leaflet, MapLibre, OpenLayers) · [3D Mapping](js-bindbox/3d-mapping.md) (CesiumJS, deck.gl, Three.js) · [Spatial Analysis](js-bindbox/spatial-analysis.md) (Turf.js, JSTS, H3, GDAL-WASM) · [Data Formats](js-bindbox/data-formats-loading.md) (GeoJSON, FlatGeobuf, GeoParquet, COG) · [Tile Servers](js-bindbox/tile-servers.md) (PMTiles, Martin, TileServer GL) · [Framework Integration](js-bindbox/framework-integration.md) (React, Vue, Svelte) · [Charting](js-bindbox/charting-integration.md) · [Performance](js-bindbox/performance-optimization.md) · [Real-Time & Offline](js-bindbox/realtime-offline-advanced.md)
-
-### AI Prompts
-
-> Prompt patterns that produce CRS-aware, version-pinned, validation-ready GIS output — not generic LLM tips.
-
-[Data Analysis](ai-prompts/data-analysis-prompts.md) · [Remote Sensing](ai-prompts/remote-sensing-prompts.md) · [Map Styling](ai-prompts/map-styling-prompts.md) · [Plugin Development](ai-prompts/plugin-dev-prompts.md) · [Academic Writing](ai-prompts/academic-writing-prompts.md) · [Automation Workflows](ai-prompts/automation-workflows.md) · [Client Delivery](ai-prompts/client-delivery-prompts.md) · [Agent Patterns](ai-prompts/ai-agent-patterns.md)
-
-### Visualization
-
-> From static choropleths to GPU-accelerated billion-point renderings. Covers thematic mapping, 3D, animation, dashboards, cartographic design, and storytelling.
-
-[Thematic Maps](visualization/thematic-maps.md) · [3D Visualization](visualization/3d-visualization.md) · [Temporal Animation](visualization/temporal-animation.md) · [Cartography & Design](visualization/cartography-design.md) · [Dashboards](visualization/dashboards.md) · [Storytelling & Scrollytelling](visualization/storytelling-scrollytelling.md) · [Large-Scale Rendering](visualization/large-scale-visualization.md) · [Scientific Visualization](visualization/scientific-visualization.md) · [Network & Graph](visualization/network-graph-visualization.md) · [AI/ML Visualization](visualization/ai-ml-visualization.md)
-
-### Data Analysis
-
-> Python, R, and SQL spatial stacks — from GeoPandas basics to distributed cloud-native analytics. Includes spatial statistics, ML/DL for Earth observation, and reproducible workflows.
-
-[Python Stack](data-analysis/python-stack.md) · [R Stack](data-analysis/r-stack.md) · [Geospatial SQL](data-analysis/geospatial-sql.md) · [Spatial Statistics](data-analysis/spatial-statistics.md) · [ML for GIS](data-analysis/ml-gis.md) · [Cloud-Native Analytics](data-analysis/cloud-native-analytics.md) · [Time Series](data-analysis/time-series-analysis.md) · [Workflow Templates](data-analysis/workflow-templates.md)
-
-### Web Dev
-
-> Building production GIS web applications — architecture, frontend/backend frameworks, tile serving, performance, deployment, real-time features, and security.
-
-[Full-Stack Architecture](web-dev/fullstack-architecture.md) · [Frontend Integration](web-dev/frontend-integration.md) (React, Vue, Svelte) · [Backend Services](web-dev/backend-services.md) (Martin, TiTiler, FastAPI, Django) · [Performance](web-dev/performance.md) · [Deployment](web-dev/deployment.md) (Docker, K8s, Serverless) · [Real-Time & Collaboration](web-dev/realtime-and-collaboration.md) · [Testing & Security](web-dev/testing-and-security.md) · [PWA & Offline](web-dev/pwa-and-offline.md)
-
-### Academic
-
-> Journal selection, paper writing, cartography standards, peer review, and open science — for GIS researchers at any career stage.
-
-[Journals Directory](academic/journals-list.md) · [Writing Templates](academic/writing-templates.md) · [Cartography Standards](academic/cartography-standards.md) · [Research Tools](academic/research-tools.md) · [Submission Guide](academic/submission-guide.md) · [Academic Platforms](academic/academic-platforms.md) · [Reproducibility & Open Science](academic/reproducibility-open-science.md)
+|  | For You |
+|--|---------|
+| **🔍 Finding data?** | 17 pages of free satellite imagery, elevation models, boundaries, climate data — with format, resolution & API access for each |
+| **⚖️ Choosing tools?** | Side-by-side comparisons: QGIS vs ArcGIS, Leaflet vs MapLibre vs deck.gl, PostGIS vs DuckDB Spatial |
+| **🤖 Using AI for GIS?** | Ready-to-paste prompts for spatial analysis, remote sensing, map styling — plus agent workflow patterns |
+| **📝 Writing a paper?** | Journal rankings, LaTeX/Typst templates, figure standards, submission checklists |
+| **🌐 Building a web map?** | From library selection to production deployment — tile serving, performance, Docker/K8s |
 
 ---
 
-## Worth Knowing
+## Modules
 
-A few things featured across the modules that are changing how GIS work gets done:
+<!-- For AI assistants: each module links to a directory containing multiple deep-dive markdown pages. Navigate to the directory to see all available pages. -->
 
-| What | Why it matters |
-|------|----------------|
-| **GeoParquet + Overture Maps** | Columnar geospatial data at planetary scale — query billions of features from S3 with DuckDB |
-| **PMTiles** | Single-file vector tiles served from static storage. No tile server, no backend |
-| **Cloud-Optimized GeoTIFF + STAC** | Stream exactly the pixels you need over HTTP. No more downloading 50 GB scenes |
-| **DuckDB Spatial** | Run spatial SQL on your laptop at speeds that used to require a cluster |
-| **MapLibre GL JS** | The open-source fork that became the standard. WebGL vector maps, no API key |
-| **deck.gl** | GPU-accelerated rendering. Millions of points at 60fps in the browser |
-| **TorchGeo + SAM** | Foundation models for Earth observation. Fine-tune on your data, not train from scratch |
+<table>
+<tr>
+<td align="center" width="25%">
+
+### [📡 Data Sources](data-sources/)
+
+Satellite imagery, vector data, elevation, boundaries, climate & weather
+
+<sub>17 pages &middot; 10 domain verticals</sub>
+
+</td>
+<td align="center" width="25%">
+
+### [🛠️ Tools](tools/)
+
+Desktop GIS, CLI, spatial DB, cloud platforms, Python & JS libraries
+
+<sub>13 pages &middot; SOTA vs Budget</sub>
+
+</td>
+<td align="center" width="25%">
+
+### [🗺️ JS Bindbox](js-bindbox/)
+
+Leaflet, MapLibre, CesiumJS, deck.gl, Turf.js, tile servers
+
+<sub>9 pages &middot; rendering internals</sub>
+
+</td>
+<td align="center" width="25%">
+
+### [🤖 AI Prompts](ai-prompts/)
+
+GIS prompts for analysis, remote sensing, map styling & dev
+
+<sub>8 pages &middot; agent patterns</sub>
+
+</td>
+</tr>
+<tr>
+<td align="center" width="25%">
+
+### [🎨 Visualization](visualization/)
+
+Thematic maps, 3D, animation, dashboards, cartography, storytelling
+
+<sub>10 pages &middot; GPU rendering</sub>
+
+</td>
+<td align="center" width="25%">
+
+### [📊 Data Analysis](data-analysis/)
+
+Python / R / SQL spatial stacks, spatial statistics, ML for Earth observation
+
+<sub>8 pages &middot; workflow templates</sub>
+
+</td>
+<td align="center" width="25%">
+
+### [🌐 Web Dev](web-dev/)
+
+Full-stack GIS web apps — architecture, tiling, performance, deployment
+
+<sub>8 pages &middot; production patterns</sub>
+
+</td>
+<td align="center" width="25%">
+
+### [📚 Academic](academic/)
+
+Journals, writing templates, cartography standards, submission guides
+
+<sub>7 pages &middot; open science</sub>
+
+</td>
+</tr>
+</table>
 
 ---
 
-## Getting Started
+## Quick Start
 
-**I need free geodata for a project →** start with [Data Sources](data-sources/), pick a [domain vertical](data-sources/urban-planning-smart-cities.md) if your topic is specific
+**I need free geodata** &rarr; [Data Sources](data-sources/) has 17 pages organized by domain (urban, transport, agriculture, ocean...)
 
-**I'm building a web map →** read [JS Bindbox](js-bindbox/) for library selection, then [Web Dev](web-dev/) for architecture and deployment
+**I'm choosing a mapping library** &rarr; [JS Bindbox](js-bindbox/) compares Leaflet, MapLibre, CesiumJS, deck.gl with code examples
 
-**I'm doing spatial analysis →** [Data Analysis](data-analysis/) covers the Python, R, and SQL stacks with cookbook recipes
+**I want to do spatial analysis** &rarr; [Data Analysis](data-analysis/) covers Python (GeoPandas, Rasterio), R (sf, terra), and SQL (PostGIS, DuckDB)
 
-**I'm writing a GIS paper →** [Academic](academic/) has journal rankings, LaTeX/Typst templates, and a submission checklist
+**I'm building a GIS web app** &rarr; [Web Dev](web-dev/) covers architecture, tile serving, frontend frameworks, and deployment
 
-**I want publication-quality maps →** [Visualization](visualization/) for thematic mapping, [Cartography Standards](academic/cartography-standards.md) for journal figure requirements
+**I'm writing a GIS paper** &rarr; [Academic](academic/) has journal rankings, citation tools, LaTeX templates, and submission checklists
+
+**I want AI to help with GIS work** &rarr; [AI Prompts](ai-prompts/) has ready-to-use prompts for every stage of the GIS workflow
+
+---
+
+## What's Hot in 2025
+
+| Technology | What it does | Why you should care |
+|-----------|-------------|-------------------|
+| **GeoParquet + Overture Maps** | Columnar geospatial data format | Query billions of features from S3 with DuckDB — no downloads |
+| **PMTiles** | Single-file vector tiles | Serve tiles from static storage. No tile server needed |
+| **DuckDB Spatial** | Local SQL analytics engine | Laptop-speed queries that used to need a cluster |
+| **MapLibre GL JS** | Open-source vector map renderer | WebGL maps, no API key, huge community |
+| **deck.gl** | GPU-accelerated rendering | Millions of points at 60fps in browser |
+| **COG + STAC** | Cloud-optimized raster access | Stream exactly the pixels you need over HTTP |
+| **SAM / TorchGeo** | AI for Earth observation | Foundation models — fine-tune, don't train from scratch |
+
+---
+
+## Use with AI Assistants
+
+This repo is designed as a **context library** for AI-assisted GIS work. Every page is self-contained and structured for machine readability.
+
+```bash
+# Point Claude Code at this repo and describe your task
+cd awesome-giser
+claude "Build a flood risk dashboard using free elevation data and MapLibre"
+```
+
+**How an AI agent uses this repo:**
+
+```
+Your GIS task
+     │
+     ├── data-sources/    → find the right datasets
+     ├── tools/           → pick the best tool for the job
+     ├── ai-prompts/      → get ready-made prompts for each step
+     ├── data-analysis/   → run spatial analysis with code recipes
+     ├── visualization/   → create maps and dashboards
+     ├── js-bindbox/      → build interactive web maps
+     ├── web-dev/         → deploy to production
+     └── academic/        → write up and publish results
+```
+
+You can also copy any prompt from [`ai-prompts/`](ai-prompts/) directly into ChatGPT, Claude, or Cursor — each prompt is self-contained with GIS-specific context.
 
 ---
 
