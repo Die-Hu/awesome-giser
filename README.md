@@ -39,10 +39,10 @@ academic/ (7 pages): journals-list.md, writing-templates.md, cartography-standar
 |-----------|------------|
 | **Free geospatial data** — satellite imagery, elevation, boundaries, climate | [📡 Data Sources](data-sources/) — 17 pages across 10 domains |
 | **GIS tool comparisons** — QGIS vs ArcGIS, PostGIS vs DuckDB Spatial | [🛠️ Tools](tools/) — 13 pages with SOTA vs Budget picks |
-| **Web mapping libraries** — Leaflet, MapLibre, CesiumJS, deck.gl | [🗺️ JS Bindbox](js-bindbox/) — 9 pages on rendering & migration |
+| **Web mapping libraries** — Leaflet, MapLibre, CesiumJS, deck.gl | [🗺️ JS Bindbox](js-bindbox/) — Quick decision guide with unified tool index |
 | **Spatial analysis recipes** — Python, R, SQL with code examples | [📊 Data Analysis](data-analysis/) — 8 workflow-ready pages |
 | **Map visualization** — thematic maps, 3D, dashboards, cartography | [🎨 Visualization](visualization/) — 10 pages up to GPU rendering |
-| **GIS web app development** — architecture, tiling, deployment | [🌐 Web Dev](web-dev/) — 8 production-pattern pages |
+| **GIS web app development** — architecture, tiling, deployment | [🌐 Web Dev](web-dev/) — Enterprise reference with tiered recommendations |
 | **AI prompts for GIS** — analysis, remote sensing, map styling | [🤖 AI Prompts](ai-prompts/) — 8 pages of ready-to-use prompts |
 | **Academic publishing** — journals, templates, submission guides | [📚 Academic](academic/) — 7 pages for researchers |
 
@@ -52,7 +52,7 @@ academic/ (7 pages): journals-list.md, writing-templates.md, cartography-standar
 
 **Need free data?** Start with [Data Sources](data-sources/) — pick a domain like [Urban Planning](data-sources/urban-planning-smart-cities.md), [Transportation](data-sources/transportation-autonomous-driving.md), or [Agriculture](data-sources/agriculture-food-security.md)
 
-**Building something?** [JS Bindbox](js-bindbox/) for [library comparison](js-bindbox/2d-mapping.md), then [Web Dev](web-dev/) for [architecture](web-dev/fullstack-architecture.md) and [deployment](web-dev/deployment.md)
+**Building something?** [JS Bindbox](js-bindbox/) for quick tool picks (small projects), then [Web Dev](web-dev/) for [architecture](web-dev/fullstack-architecture.md) and [deployment](web-dev/deployment.md) (large projects)
 
 **Doing analysis?** [Python Stack](data-analysis/python-stack.md) · [R Stack](data-analysis/r-stack.md) · [Geospatial SQL](data-analysis/geospatial-sql.md) · [ML for GIS](data-analysis/ml-gis.md)
 

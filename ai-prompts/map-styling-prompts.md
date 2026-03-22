@@ -551,7 +551,7 @@ not content. Reserve visual weight for z14+ where navigation matters.
 
 #### Expected Output
 
-A complete, valid MapLibre GL style JSON (typically 200--500 lines) with sources, glyphs, sprite, and a full layers array. Loadable directly by MapLibre GL JS 4.x.
+A complete, valid MapLibre GL style JSON (typically 200--500 lines) with sources, glyphs, sprite, and a full layers array. Loadable directly by MapLibre GL JS.
 
 #### Validation Checklist
 

@@ -504,7 +504,7 @@ TypeScript source, compiled JS, CSS, package.json, tsconfig, and a working demo 
 ### Validation Checklist
 
 - [ ] `tsc --noEmit` passes with zero errors
-- [ ] Control renders correctly on MapLibre GL JS 4.x
+- [ ] Control renders correctly on MapLibre GL JS
 - [ ] Events fire with correct payload types
 - [ ] `onRemove()` leaves no orphaned DOM nodes or listeners
 

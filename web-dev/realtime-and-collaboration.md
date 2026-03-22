@@ -1,24 +1,27 @@
-# Real-Time & Collaborative GIS — 2025 Complete Guide
+# Real-Time & Collaboration -- Enterprise Reference
 
-Real-time geospatial applications power fleet tracking, IoT sensor dashboards, collaborative map editing, and live event monitoring. This guide covers WebSocket, SSE, MQTT, CRDT-based collaboration, and streaming architectures for spatial data.
+> Data validated: 2026-03-21
 
-> **Quick Picks**
-> - **Fleet tracking:** Socket.io + MapLibre real-time layer updates
-> - **IoT sensors:** MQTT (Mosquitto) + time-series DB + deck.gl
-> - **Collaborative editing:** Yjs CRDT + MapLibre Draw
-> - **Database changes:** Supabase Realtime or PostGIS LISTEN/NOTIFY
-> - **Streaming pipeline:** Kafka + Debezium CDC for spatial tables
+## 30-Second Decision
+
+**Fleet tracking:** Socket.io + MapLibre real-time layer updates. **IoT sensors:** MQTT + TimescaleDB + deck.gl. **Collaborative editing:** Yjs CRDT (with y-redis + periodic compaction). **Database change notifications:** PostGIS LISTEN/NOTIFY (90% of use cases). **Guaranteed delivery at scale:** Debezium CDC + Kafka. **Rapid prototyping:** Supabase Realtime. **One-way server push:** SSE (simpler than WebSocket when bidirectional is not needed).
 
 ---
 
-## WebSocket for Spatial Data
+## Tier 1 -- Production First Choices
 
-### Socket.io + GeoJSON — Real-Time Fleet Tracking
+---
+
+### Socket.io -- Real-Time Spatial Events
+
+The most popular WebSocket library. Built-in reconnection, room-based broadcasting, Redis adapter for horizontal scaling.
+
+**Why Tier 1:** Millions of production deployments. The standard for web-based real-time spatial applications (fleet tracking, dashboards). For enterprise scale (>10K concurrent connections), use Redis adapter + multiple Socket.io pods behind a sticky-session load balancer.
 
 #### Server (Node.js)
 
 ```typescript
-// server.ts — Fleet tracking WebSocket server
+// server.ts -- Fleet tracking WebSocket server
 import { Server } from 'socket.io';
 import { createServer } from 'http';
 import { Pool } from 'pg';
@@ -30,39 +33,25 @@ const io = new Server(httpServer, {
 });
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-
-// Store latest vehicle positions
 const vehiclePositions = new Map<string, {
-  id: string;
-  lng: number;
-  lat: number;
-  speed: number;
-  heading: number;
-  timestamp: number;
+  id: string; lng: number; lat: number; speed: number; heading: number; timestamp: number;
 }>();
 
 // Handle GPS device connections
 io.of('/vehicles').on('connection', (socket) => {
   const vehicleId = socket.handshake.auth.vehicleId;
-  console.log(`Vehicle ${vehicleId} connected`);
 
-  // Receive GPS updates from vehicles
   socket.on('position', async (data) => {
     const position = {
-      id: vehicleId,
-      lng: data.lng,
-      lat: data.lat,
-      speed: data.speed,
-      heading: data.heading,
-      timestamp: Date.now(),
+      id: vehicleId, lng: data.lng, lat: data.lat,
+      speed: data.speed, heading: data.heading, timestamp: Date.now(),
     };
-
     vehiclePositions.set(vehicleId, position);
 
     // Broadcast to all dashboard clients
     io.of('/dashboard').emit('vehicle:update', position);
 
-    // Store in database (batched)
+    // Store in database
     await pool.query(
       `INSERT INTO vehicle_tracks (vehicle_id, geom, speed, heading, timestamp)
        VALUES ($1, ST_SetSRID(ST_MakePoint($2, $3), 4326), $4, $5, NOW())`,
@@ -78,7 +67,6 @@ io.of('/vehicles').on('connection', (socket) => {
 
 // Handle dashboard client connections
 io.of('/dashboard').on('connection', (socket) => {
-  // Send current state of all vehicles
   const allPositions = Array.from(vehiclePositions.values());
   socket.emit('vehicles:init', {
     type: 'FeatureCollection',
@@ -89,7 +77,6 @@ io.of('/dashboard').on('connection', (socket) => {
     })),
   });
 
-  // Subscribe to a geographic area
   socket.on('subscribe:bbox', (bbox) => {
     socket.join(`bbox:${bbox.join(',')}`);
   });
@@ -105,41 +92,31 @@ setInterval(async () => {
     );
     if (result.rows.length > 0) {
       io.of('/dashboard').emit('geofence:enter', {
-        vehicleId: id,
-        zone: result.rows[0].zone_name,
-        position: [pos.lng, pos.lat],
+        vehicleId: id, zone: result.rows[0].zone_name, position: [pos.lng, pos.lat],
       });
     }
   }
 }, 5000);
 
-httpServer.listen(3001, () => console.log('WebSocket server on :3001'));
+httpServer.listen(3001);
 ```
 
 #### Client (MapLibre + React)
 
 ```jsx
 // components/FleetMap.jsx
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Map, { Source, Layer } from 'react-map-gl/maplibre';
 import { io } from 'socket.io-client';
 
 export default function FleetMap() {
   const [vehicles, setVehicles] = useState(null);
-  const socketRef = useRef(null);
 
   useEffect(() => {
-    const socket = io('http://localhost:3001/dashboard', {
-      transports: ['websocket'],
-    });
-    socketRef.current = socket;
+    const socket = io('http://localhost:3001/dashboard', { transports: ['websocket'] });
 
-    // Initial state
-    socket.on('vehicles:init', (geojson) => {
-      setVehicles(geojson);
-    });
+    socket.on('vehicles:init', (geojson) => setVehicles(geojson));
 
-    // Real-time updates
     socket.on('vehicle:update', (position) => {
       setVehicles((prev) => {
         if (!prev) return prev;
@@ -152,7 +129,6 @@ export default function FleetMap() {
               }
             : f
         );
-        // Add if new
         if (!features.some((f) => f.properties.id === position.id)) {
           features.push({
             type: 'Feature',
@@ -164,17 +140,11 @@ export default function FleetMap() {
       });
     });
 
-    // Vehicle went offline
     socket.on('vehicle:offline', ({ id }) => {
       setVehicles((prev) => {
         if (!prev) return prev;
         return { ...prev, features: prev.features.filter((f) => f.properties.id !== id) };
       });
-    });
-
-    // Geofence alerts
-    socket.on('geofence:enter', (alert) => {
-      console.log(`Vehicle ${alert.vehicleId} entered ${alert.zone}`);
     });
 
     return () => { socket.disconnect(); };
@@ -195,9 +165,7 @@ export default function FleetMap() {
               'circle-radius': 8,
               'circle-color': [
                 'interpolate', ['linear'], ['get', 'speed'],
-                0, '#ff0000',
-                30, '#ffff00',
-                60, '#00ff00',
+                0, '#ff0000', 30, '#ffff00', 60, '#00ff00',
               ],
               'circle-stroke-width': 2,
               'circle-stroke-color': '#fff',
@@ -206,11 +174,7 @@ export default function FleetMap() {
           <Layer
             id="vehicle-labels"
             type="symbol"
-            layout={{
-              'text-field': ['get', 'id'],
-              'text-size': 10,
-              'text-offset': [0, 1.5],
-            }}
+            layout={{ 'text-field': ['get', 'id'], 'text-size': 10, 'text-offset': [0, 1.5] }}
             paint={{ 'text-color': '#fff' }}
           />
         </Source>
@@ -220,128 +184,42 @@ export default function FleetMap() {
 }
 ```
 
-### Scaling WebSocket with Redis Pub/Sub
+#### Scaling with Redis
 
 ```typescript
 // Horizontal scaling: multiple WebSocket servers behind load balancer
-import { Server } from 'socket.io';
 import { createAdapter } from '@socket.io/redis-adapter';
 import { createClient } from 'redis';
 
 const pubClient = createClient({ url: 'redis://localhost:6379' });
 const subClient = pubClient.duplicate();
-
 await pubClient.connect();
 await subClient.connect();
 
 const io = new Server(httpServer);
 io.adapter(createAdapter(pubClient, subClient));
-
 // Now multiple Socket.io servers share state via Redis
-// Messages published on one server are received by clients on all servers
 ```
+
+**Caveats:**
+- **Scaling requires Redis.** Single-server Socket.io is easy. Multi-server requires `@socket.io/redis-adapter`. Redis becomes a SPOF for real-time features.
+- **Memory per connection.** Each WebSocket connection consumes ~10-50KB. 10K concurrent connections = 100-500MB. Must monitor server memory.
+- **Reconnection storms.** After a server restart, all clients reconnect simultaneously. This can overwhelm the server. Use exponential backoff and jitter (built-in but must be configured).
+- **HTTP polling fallback.** Socket.io falls back to HTTP long-polling if WebSocket upgrade fails. This is 10x more resource-intensive per connection. Corporate proxies often block WebSocket upgrades.
+- **Binary protocol overhead.** Socket.io adds its own framing protocol on top of WebSocket. For high-frequency GPS updates (10Hz), raw WebSocket or MQTT is more efficient.
 
 ---
 
-## Server-Sent Events (SSE)
+### MQTT -- IoT Sensor Networks
 
-### SSE for Spatial Notifications
+The IoT industry standard for lightweight messaging. Ideal for high-frequency sensor data (GPS, air quality, temperature) where thousands of devices publish data. Mosquitto is the most popular open-source MQTT broker for development and single-node deployments.
 
-```python
-# FastAPI SSE endpoint for spatial updates
-from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse
-import asyncio
-import json
+**Why Tier 1:** Industry standard for IoT. Handles 100K+ connections on a single Mosquitto node. For the full sensor-to-map pipeline: sensors -> MQTT -> ingest service -> TimescaleDB (time-series) + PostGIS (spatial) -> Martin (tiles) + Socket.io (dashboard).
 
-app = FastAPI()
-
-# Shared event queue
-spatial_events = asyncio.Queue()
-
-async def event_generator(request: Request, bbox=None):
-    while True:
-        if await request.is_disconnected():
-            break
-
-        try:
-            event = await asyncio.wait_for(spatial_events.get(), timeout=30)
-
-            # Filter by bbox if provided
-            if bbox:
-                coords = event.get('coordinates', [0, 0])
-                if not (bbox[0] <= coords[0] <= bbox[2] and bbox[1] <= coords[1] <= bbox[3]):
-                    continue
-
-            yield f"event: {event['type']}\ndata: {json.dumps(event)}\n\n"
-        except asyncio.TimeoutError:
-            yield f": keepalive\n\n"
-
-@app.get("/events/spatial")
-async def spatial_sse(request: Request, bbox: str = None):
-    parsed_bbox = [float(c) for c in bbox.split(',')] if bbox else None
-    return StreamingResponse(
-        event_generator(request, parsed_bbox),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-# Trigger events (from data changes, sensors, etc.)
-@app.post("/events/emit")
-async def emit_event(event: dict):
-    await spatial_events.put(event)
-    return {"status": "emitted"}
-```
-
-```javascript
-// Client: EventSource + MapLibre
-const bbox = map.getBounds().toArray().flat().join(',');
-const eventSource = new EventSource(`/events/spatial?bbox=${bbox}`);
-
-eventSource.addEventListener('feature:created', (e) => {
-  const feature = JSON.parse(e.data);
-  const source = map.getSource('realtime');
-  const data = source._data;
-  data.features.push(feature);
-  source.setData(data);
-});
-
-eventSource.addEventListener('feature:updated', (e) => {
-  const updated = JSON.parse(e.data);
-  // Update specific feature in source
-});
-
-// Reconnect on map move with new bbox
-map.on('moveend', () => {
-  eventSource.close();
-  const newBbox = map.getBounds().toArray().flat().join(',');
-  // Reconnect with new bbox...
-});
-```
-
-### SSE vs WebSocket Decision Matrix
-
-| Factor | SSE | WebSocket |
-|--------|-----|-----------|
-| Direction | Server → Client only | Bidirectional |
-| Protocol | HTTP/1.1+ | Upgrade to ws:// |
-| Auto-reconnect | Built-in | Manual |
-| Binary data | No (text only) | Yes |
-| Max connections | ~6 per domain (HTTP/1.1) | Unlimited |
-| Best for GIS | Notifications, status | Real-time tracking, collaboration |
-
----
-
-## MQTT for IoT GIS
-
-### Mosquitto + Sensor Network
+**WARNING: For production HA deployments, use EMQX (open-source edition) instead of attempting Mosquitto bridging.** Mosquitto is single-node by design. Multi-node Mosquitto bridge configurations are fragile and not suitable for production HA. EMQX provides native clustering, built-in dashboard, dynamic ACL via HTTP/database backends, and horizontal scaling out of the box.
 
 ```yaml
-# docker-compose.yml — MQTT sensor infrastructure
+# docker-compose.yml -- MQTT sensor infrastructure
 version: '3.8'
 services:
   mosquitto:
@@ -355,8 +233,6 @@ services:
     environment:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
     ports: ["5432:5432"]
-    volumes:
-      - tsdata:/home/postgres/pgdata
 
   ingest:
     build: ./ingest
@@ -364,50 +240,16 @@ services:
       MQTT_BROKER: mqtt://mosquitto:1883
       DATABASE_URL: postgresql://postgres:${DB_PASSWORD}@timescaledb/postgres
     depends_on: [mosquitto, timescaledb]
-
-volumes:
-  tsdata:
 ```
-
-```ini
-# mosquitto.conf
-listener 1883
-listener 9001
-protocol websockets
-
-allow_anonymous false
-password_file /mosquitto/config/passwords
-
-# Topic ACL
-acl_file /mosquitto/config/acl
-```
-
-```
-# mosquitto ACL
-# Sensors can publish to their own topic
-pattern readwrite sensors/%u/#
-
-# Dashboard can subscribe to all sensors
-user dashboard
-topic read sensors/#
-
-# Topic structure:
-# sensors/{region}/{sensor_type}/{sensor_id}
-# sensors/beijing/air_quality/aq001
-# sensors/shanghai/temperature/temp042
-```
-
-### Ingest Service — MQTT to TimescaleDB + PostGIS
 
 ```typescript
-// ingest/index.ts
+// ingest/index.ts -- MQTT to TimescaleDB + PostGIS
 import mqtt from 'mqtt';
 import { Pool } from 'pg';
 
 const client = mqtt.connect(process.env.MQTT_BROKER!);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
-// Create hypertable for time-series spatial data
 await pool.query(`
   CREATE EXTENSION IF NOT EXISTS postgis;
   CREATE EXTENSION IF NOT EXISTS timescaledb;
@@ -419,15 +261,12 @@ await pool.query(`
     value DOUBLE PRECISION,
     geom GEOMETRY(Point, 4326)
   );
-
   SELECT create_hypertable('sensor_readings', 'time', if_not_exists => TRUE);
   CREATE INDEX ON sensor_readings USING GIST (geom, time);
 `);
 
-// Subscribe to all sensor topics
 client.subscribe('sensors/#');
 
-// Batch insert buffer
 let batch: any[] = [];
 const BATCH_SIZE = 100;
 
@@ -437,39 +276,30 @@ client.on('message', async (topic, message) => {
 
   batch.push({
     time: new Date(data.timestamp || Date.now()),
-    sensor_id: parts[3],
-    sensor_type: parts[2],
-    value: data.value,
-    lng: data.longitude,
-    lat: data.latitude,
+    sensor_id: parts[3], sensor_type: parts[2],
+    value: data.value, lng: data.longitude, lat: data.latitude,
   });
 
   if (batch.length >= BATCH_SIZE) {
     const values = batch.map((b, i) => {
-      const offset = i * 5;
-      return `($${offset+1}, $${offset+2}, $${offset+3}, $${offset+4}, ST_SetSRID(ST_MakePoint($${offset+5}, $${offset+6}), 4326))`;
+      const o = i * 6;
+      return `($${o+1}, $${o+2}, $${o+3}, $${o+4}, ST_SetSRID(ST_MakePoint($${o+5}, $${o+6}), 4326))`;
     }).join(',');
-
     const params = batch.flatMap((b) => [b.time, b.sensor_id, b.sensor_type, b.value, b.lng, b.lat]);
-
     await pool.query(
       `INSERT INTO sensor_readings (time, sensor_id, sensor_type, value, geom) VALUES ${values}`,
       params
     );
-
     batch = [];
   }
 });
 ```
-
-### Browser MQTT Client + MapLibre
 
 ```javascript
 // Dashboard: MQTT over WebSocket + MapLibre
 import mqtt from 'mqtt';
 
 const client = mqtt.connect('ws://localhost:9001');
-
 client.subscribe('sensors/+/air_quality/+');
 
 const sensorData = new Map();
@@ -477,46 +307,98 @@ const sensorData = new Map();
 client.on('message', (topic, message) => {
   const data = JSON.parse(message.toString());
   const sensorId = topic.split('/')[3];
+  sensorData.set(sensorId, { ...data, id: sensorId, timestamp: Date.now() });
 
-  sensorData.set(sensorId, {
-    ...data,
-    id: sensorId,
-    timestamp: Date.now(),
-  });
-
-  // Update MapLibre source
-  const geojson = {
+  map.getSource('sensors')?.setData({
     type: 'FeatureCollection',
     features: Array.from(sensorData.values()).map((s) => ({
       type: 'Feature',
-      properties: {
-        id: s.id,
-        value: s.value,
-        aqi: getAQILevel(s.value),
-      },
-      geometry: {
-        type: 'Point',
-        coordinates: [s.longitude, s.latitude],
-      },
+      properties: { id: s.id, value: s.value },
+      geometry: { type: 'Point', coordinates: [s.longitude, s.latitude] },
     })),
-  };
-
-  map.getSource('sensors')?.setData(geojson);
+  });
 });
-
-function getAQILevel(pm25) {
-  if (pm25 <= 50) return 'good';
-  if (pm25 <= 100) return 'moderate';
-  if (pm25 <= 150) return 'unhealthy-sensitive';
-  return 'unhealthy';
-}
 ```
+
+**Caveats:**
+- **No built-in persistence for messages.** QoS 2 retained messages are stored but history is not. Need TimescaleDB/InfluxDB for time-series storage.
+- **Topic ACL management.** ACL files must be manually managed. No dynamic ACL API without plugins. Large deployments need a custom auth plugin (or use EMQX which has built-in HTTP/database ACL backends).
+- **WebSocket bridge overhead.** Browser clients connect via WebSocket transport. The ws:// to MQTT translation adds latency and memory overhead.
+- **Mosquitto clustering is limited.** Mosquitto is single-node. For HA, use EMQX (open-source, native clustering) or HiveMQ (commercial). Do not attempt multi-Mosquitto bridge configurations in production -- they are fragile and poorly documented.
+- **Retained messages can accumulate.** If thousands of sensors publish retained messages, new subscribers receive thousands of messages on connect, causing browser freezes.
 
 ---
 
-## Collaborative Map Editing
+### PostGIS LISTEN/NOTIFY -- Lightweight Change Notifications
 
-### Yjs CRDT + MapLibre Draw
+Built into PostgreSQL. Zero additional infrastructure. Sufficient for 90% of spatial change notification use cases.
+
+**Why Tier 1:** The pragmatic choice for most GIS applications. Handles tile cache invalidation, dashboard refresh, and simple real-time updates without any additional infrastructure. Use Debezium only when you need guaranteed delivery, multi-consumer, or at-scale streaming.
+
+```sql
+-- Trigger for real-time spatial notifications
+CREATE OR REPLACE FUNCTION notify_spatial_change()
+RETURNS trigger AS $$
+DECLARE
+  payload json;
+BEGIN
+  payload = json_build_object(
+    'operation', TG_OP,
+    'table', TG_TABLE_NAME,
+    'id', COALESCE(NEW.id, OLD.id),
+    'bbox', CASE
+      WHEN TG_OP = 'DELETE' THEN ST_AsGeoJSON(ST_Envelope(OLD.geom))::json
+      ELSE ST_AsGeoJSON(ST_Envelope(NEW.geom))::json
+    END
+  );
+  PERFORM pg_notify('spatial_changes', payload::text);
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER features_notify
+AFTER INSERT OR UPDATE OR DELETE ON features
+FOR EACH ROW EXECUTE FUNCTION notify_spatial_change();
+```
+
+```python
+# Python listener for PostGIS notifications
+import asyncio
+import asyncpg
+import json
+
+async def listen_spatial_changes():
+    conn = await asyncpg.connect(dsn='postgresql://user:pass@localhost/gisdb')
+
+    async def handler(conn, pid, channel, payload):
+        data = json.loads(payload)
+        print(f"Spatial change: {data['operation']} on {data['table']} id={data['id']}")
+        await invalidate_tiles_for_bbox(data['bbox'])
+
+    await conn.add_listener('spatial_changes', handler)
+    while True:
+        await asyncio.sleep(1)
+
+asyncio.run(listen_spatial_changes())
+```
+
+**Caveats:**
+- **Payload size limit.** NOTIFY payload is limited to 8000 bytes. Large geometries must be referenced by ID, not included inline.
+- **No guaranteed delivery.** If the listener is disconnected when a notification fires, it's lost. Not suitable for mission-critical event delivery.
+- **Single connection.** Each LISTEN consumes a PostgreSQL connection. For multiple channels, use a single connection with multiple LISTEN commands.
+- **No persistence.** Notifications are fire-and-forget. No replay capability. For guaranteed delivery, use Debezium CDC.
+
+---
+
+## Tier 2 -- Specialized Use Cases
+
+---
+
+### Yjs CRDT -- Collaborative Map Editing
+
+Conflict-free replicated data types for real-time collaborative editing. Used by Notion, Jupyter, many collaborative editors. Works well for multi-user map drawing and feature editing.
+
+**Why Tier 2:** Production-readiness 4/5 **when using y-redis for persistence + periodic document compaction**. Drops to 2/5 with the default y-websocket server, which keeps all documents in memory with no compaction -- unsuitable for production collaborative GIS where documents grow unboundedly as features are edited.
 
 ```typescript
 // Collaborative drawing with conflict-free replicated data
@@ -524,11 +406,9 @@ import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
 import MapboxDraw from '@mapbox/mapbox-gl-draw';
 
-// Shared document
 const ydoc = new Y.Doc();
 const provider = new WebsocketProvider('wss://sync.example.com', 'map-room-123', ydoc);
 
-// Shared GeoJSON features
 const yFeatures = ydoc.getMap('features');
 
 // Awareness (cursor positions, user info)
@@ -536,10 +416,8 @@ const awareness = provider.awareness;
 awareness.setLocalState({
   user: { name: 'Alice', color: '#ff0000' },
   cursor: null,
-  viewport: null,
 });
 
-// Initialize MapboxDraw
 const draw = new MapboxDraw({
   displayControlsDefault: false,
   controls: { polygon: true, line_string: true, point: true, trash: true },
@@ -570,12 +448,7 @@ yFeatures.observe((event) => {
   event.changes.keys.forEach((change, key) => {
     if (change.action === 'add' || change.action === 'update') {
       const feature = yFeatures.get(key);
-      const existing = draw.get(key);
-      if (!existing) {
-        draw.add(feature);
-      } else {
-        draw.add(feature); // Replace
-      }
+      draw.add(feature);
     } else if (change.action === 'delete') {
       draw.delete(key);
     }
@@ -584,10 +457,7 @@ yFeatures.observe((event) => {
 
 // Share cursor position on map
 map.on('mousemove', (e) => {
-  awareness.setLocalStateField('cursor', {
-    lng: e.lngLat.lng,
-    lat: e.lngLat.lat,
-  });
+  awareness.setLocalStateField('cursor', { lng: e.lngLat.lng, lat: e.lngLat.lat });
 });
 
 // Show other users' cursors
@@ -598,7 +468,6 @@ awareness.on('change', () => {
     .map(([, state]) => state)
     .filter((s) => s.cursor);
 
-  // Update cursor layer
   map.getSource('cursors')?.setData({
     type: 'FeatureCollection',
     features: cursors.map((s) => ({
@@ -610,7 +479,20 @@ awareness.on('change', () => {
 });
 ```
 
-### Supabase Realtime for Spatial Tables
+**Caveats:**
+- **Document size growth.** CRDT documents grow monotonically. Undo history is retained forever. For spatial features that are frequently edited, the Yjs document can grow to 10-100x the actual data size. **Periodic compaction is essential for production use.**
+- **Conflict resolution is automatic but opaque.** When two users edit the same feature simultaneously, Yjs resolves the conflict deterministically but may produce unexpected geometry. No "resolve conflict" UI by default.
+- **y-websocket server scaling.** The default y-websocket server keeps all documents in memory. Large maps with thousands of features can consume gigabytes. **Must use y-redis for multi-server deployments and persistence.**
+- **Awareness protocol overhead.** Broadcasting cursor positions to all participants at 60fps generates significant WebSocket traffic. Must throttle to 5-10fps for maps.
+- **GeoJSON-specific challenges.** Yjs works on JSON structures. GeoJSON coordinate arrays (deeply nested) are expensive to diff and sync. Editing a polygon vertex generates larger deltas than editing a text character.
+
+---
+
+### Supabase Realtime -- Managed Database Subscriptions
+
+Listen to PostGIS table changes in real-time via managed WebSocket connections. Built on PostgreSQL's replication, with presence support for collaborative features.
+
+**Why Tier 2:** The fastest way to add real-time spatial features. Excellent for rapid development. For enterprise, evaluate connection limits carefully and plan for self-hosting if vendor lock-in is a concern.
 
 ```typescript
 import { createClient } from '@supabase/supabase-js';
@@ -626,20 +508,9 @@ const channel = supabase
     table: 'features',
   }, (payload) => {
     switch (payload.eventType) {
-      case 'INSERT': {
-        // Add new feature to map
-        const feature = payload.new;
-        addFeatureToMap(feature);
-        break;
-      }
-      case 'UPDATE': {
-        updateFeatureOnMap(payload.new);
-        break;
-      }
-      case 'DELETE': {
-        removeFeatureFromMap(payload.old.id);
-        break;
-      }
+      case 'INSERT': addFeatureToMap(payload.new); break;
+      case 'UPDATE': updateFeatureOnMap(payload.new); break;
+      case 'DELETE': removeFeatureFromMap(payload.old.id); break;
     }
   })
   .subscribe();
@@ -662,7 +533,6 @@ presenceChannel
     }
   });
 
-// Update presence on map move
 map.on('moveend', () => {
   presenceChannel.track({
     user_id: currentUser.id,
@@ -672,67 +542,22 @@ map.on('moveend', () => {
 });
 ```
 
+**Caveats:**
+- **Realtime channel limits.** Free tier: 200 concurrent connections, 2 channels. Pro tier: 500 connections. For large collaborative maps, this can be limiting.
+- **Postgres Changes listener delay.** `postgres_changes` events are not instant -- there's a 100-500ms delay. For real-time vehicle tracking, this is too slow. Use direct WebSocket for sub-100ms requirements.
+- **RLS + Realtime performance.** Row-Level Security policies are evaluated for every broadcast message. Complex spatial RLS policies (ST_Intersects checks) can slow down broadcast significantly.
+- **Vendor lock-in.** Supabase-specific APIs don't have portable equivalents.
+- **Self-hosting complexity.** Self-hosted Supabase requires 10+ services. The Docker Compose file is complex.
+
 ---
 
-## Streaming & Change Data Capture
+### Debezium CDC -- Enterprise Change Data Capture
 
-### PostGIS LISTEN/NOTIFY
+Change Data Capture via PostgreSQL logical replication. Streams every spatial table change to Kafka for multi-consumer processing. Enterprise-grade guaranteed delivery.
 
-```sql
--- Trigger for real-time spatial notifications
-CREATE OR REPLACE FUNCTION notify_spatial_change()
-RETURNS trigger AS $$
-DECLARE
-  payload json;
-BEGIN
-  payload = json_build_object(
-    'operation', TG_OP,
-    'table', TG_TABLE_NAME,
-    'id', COALESCE(NEW.id, OLD.id),
-    'bbox', CASE
-      WHEN TG_OP = 'DELETE' THEN ST_AsGeoJSON(ST_Envelope(OLD.geom))::json
-      ELSE ST_AsGeoJSON(ST_Envelope(NEW.geom))::json
-    END
-  );
-
-  PERFORM pg_notify('spatial_changes', payload::text);
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER features_notify
-AFTER INSERT OR UPDATE OR DELETE ON features
-FOR EACH ROW EXECUTE FUNCTION notify_spatial_change();
-```
-
-```python
-# Python listener for PostGIS notifications
-import asyncio
-import asyncpg
-import json
-
-async def listen_spatial_changes():
-    conn = await asyncpg.connect(dsn='postgresql://user:pass@localhost/gisdb')
-
-    async def handler(conn, pid, channel, payload):
-        data = json.loads(payload)
-        print(f"Spatial change: {data['operation']} on {data['table']} id={data['id']}")
-        # Forward to WebSocket clients, invalidate tile cache, etc.
-        await invalidate_tiles_for_bbox(data['bbox'])
-
-    await conn.add_listener('spatial_changes', handler)
-
-    # Keep alive
-    while True:
-        await asyncio.sleep(1)
-
-asyncio.run(listen_spatial_changes())
-```
-
-### Debezium CDC for Spatial Tables
+**Why Tier 2:** The right tool when you need guaranteed delivery of every spatial change, multiple consumers (tile cache invalidation + analytics + alerting), and replay capability. Overkill for most GIS apps -- use PostGIS LISTEN/NOTIFY first.
 
 ```json
-// Debezium connector config for PostGIS
 {
   "name": "postgis-connector",
   "config": {
@@ -754,54 +579,64 @@ asyncio.run(listen_spatial_changes())
 }
 ```
 
-### GraphQL Subscriptions
+**Caveats:**
+- **Infrastructure weight.** Kafka + Zookeeper (or KRaft) + Kafka Connect is 3-6 services before you write a single line of application code. Each needs monitoring.
+- **Geometric data serialization.** PostGIS geometry columns are serialized as WKB hex strings in CDC events. Consumer code must parse these with a spatial library.
+- **Slot management.** PostgreSQL replication slots used by Debezium prevent WAL cleanup. If the connector goes down for hours, WAL files accumulate and can fill the disk, crashing PostgreSQL.
+- **Schema evolution.** Adding a column to a spatial table requires connector restart. Schema registry adds another service to manage.
+- **Anti-pattern: Using Debezium when PostGIS LISTEN/NOTIFY would suffice.** LISTEN/NOTIFY handles 90% of change notification use cases without Kafka.
 
-```typescript
-// GraphQL subscription for spatial data changes
-import { createServer } from 'http';
-import { WebSocketServer } from 'ws';
-import { useServer } from 'graphql-ws/lib/use/ws';
-import { makeExecutableSchema } from '@graphql-tools/schema';
+---
 
-const typeDefs = `
-  type Feature {
-    id: ID!
-    name: String!
-    geometry: JSON!
-  }
+## Server-Sent Events (SSE)
 
-  type Subscription {
-    featureChanged(bbox: [Float!]): Feature!
-  }
-`;
+### SSE for Spatial Notifications
 
-const resolvers = {
-  Subscription: {
-    featureChanged: {
-      subscribe: async function* (_, { bbox }) {
-        // Listen to PostGIS NOTIFY
-        const conn = await pool.connect();
-        await conn.query("LISTEN spatial_changes");
+One-way server-to-client streaming. Simpler than WebSocket, with built-in reconnection.
 
-        try {
-          while (true) {
-            const notification = await waitForNotification(conn);
-            const data = JSON.parse(notification.payload);
+```python
+# FastAPI SSE endpoint for spatial updates
+from fastapi import FastAPI, Request
+from fastapi.responses import StreamingResponse
+import asyncio, json
 
-            // Filter by bbox if provided
-            if (bbox && !bboxIntersects(data.bbox, bbox)) continue;
+app = FastAPI()
+spatial_events = asyncio.Queue()
 
-            const feature = await getFeature(data.id);
-            yield { featureChanged: feature };
-          }
-        } finally {
-          conn.release();
-        }
-      },
-    },
-  },
-};
+async def event_generator(request: Request, bbox=None):
+    while True:
+        if await request.is_disconnected():
+            break
+        try:
+            event = await asyncio.wait_for(spatial_events.get(), timeout=30)
+            if bbox:
+                coords = event.get('coordinates', [0, 0])
+                if not (bbox[0] <= coords[0] <= bbox[2] and bbox[1] <= coords[1] <= bbox[3]):
+                    continue
+            yield f"event: {event['type']}\ndata: {json.dumps(event)}\n\n"
+        except asyncio.TimeoutError:
+            yield f": keepalive\n\n"
+
+@app.get("/events/spatial")
+async def spatial_sse(request: Request, bbox: str = None):
+    parsed_bbox = [float(c) for c in bbox.split(',')] if bbox else None
+    return StreamingResponse(
+        event_generator(request, parsed_bbox),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
 ```
+
+### SSE vs WebSocket Decision Matrix
+
+| Factor | SSE | WebSocket |
+|--------|-----|-----------|
+| Direction | Server -> Client only | Bidirectional |
+| Protocol | HTTP/1.1+ | Upgrade to ws:// |
+| Auto-reconnect | Built-in | Manual |
+| Binary data | No (text only) | Yes |
+| Max connections | ~6 per domain (HTTP/1.1) | Unlimited |
+| Best for GIS | Notifications, status | Real-time tracking, collaboration |
 
 ---
 
@@ -830,13 +665,11 @@ const resolvers = {
 └─────────┘  └─────────┘  └─────────┘
 ```
 
-### Geofencing — Real-Time Point-in-Polygon
+### Geofencing -- Real-Time Point-in-Polygon
 
 ```python
-# In-memory geofence checker with R-tree
 from rtree import index
 from shapely.geometry import shape, Point
-import json
 
 class GeofenceManager:
     def __init__(self):
@@ -856,17 +689,11 @@ class GeofenceManager:
             zone_id = item.object
             zone = self.zones[zone_id]
             if zone['geom'].contains(point):
-                results.append({
-                    'zone_id': zone_id,
-                    'zone_name': zone['properties'].get('name'),
-                })
+                results.append({'zone_id': zone_id, 'zone_name': zone['properties'].get('name')})
         return results
 
-# Usage
 gf = GeofenceManager()
 gf.add_zone('zone1', zone1_geojson)
-
-# On each GPS update:
 zones = gf.check_point(116.4, 39.9)
 if zones:
     emit_geofence_alert(vehicle_id, zones)
@@ -875,7 +702,6 @@ if zones:
 ### Rate Limiting Spatial Streams
 
 ```typescript
-// Throttle GPS updates to prevent overwhelming clients
 class SpatialThrottler {
   private lastEmit = new Map<string, number>();
   private minInterval: number;
@@ -887,7 +713,6 @@ class SpatialThrottler {
   shouldEmit(entityId: string): boolean {
     const now = Date.now();
     const last = this.lastEmit.get(entityId) || 0;
-
     if (now - last >= this.minInterval) {
       this.lastEmit.set(entityId, now);
       return true;
@@ -905,19 +730,16 @@ socket.on('position', (data) => {
 });
 ```
 
-### Connection Management
+### Robust WebSocket Reconnection
 
 ```typescript
-// Robust WebSocket client with reconnection
 class SpatialWebSocket {
   private ws: WebSocket | null = null;
-  private url: string;
   private reconnectDelay = 1000;
   private maxReconnectDelay = 30000;
   private heartbeatInterval: NodeJS.Timeout | null = null;
 
-  constructor(url: string) {
-    this.url = url;
+  constructor(private url: string) {
     this.connect();
   }
 
@@ -925,21 +747,19 @@ class SpatialWebSocket {
     this.ws = new WebSocket(this.url);
 
     this.ws.onopen = () => {
-      console.log('Connected');
-      this.reconnectDelay = 1000; // Reset delay
+      this.reconnectDelay = 1000;
       this.startHeartbeat();
     };
 
     this.ws.onclose = () => {
       this.stopHeartbeat();
-      console.log(`Reconnecting in ${this.reconnectDelay}ms...`);
       setTimeout(() => this.connect(), this.reconnectDelay);
       this.reconnectDelay = Math.min(this.reconnectDelay * 2, this.maxReconnectDelay);
     };
 
     this.ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
-      if (data.type === 'pong') return; // Heartbeat response
+      if (data.type === 'pong') return;
       this.handleMessage(data);
     };
   }

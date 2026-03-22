@@ -1,75 +1,46 @@
-# Tile Servers & Services
+# Tile Servers & Hosting
 
-> Self-hosted and cloud-based solutions for serving map tiles (vector and raster) to web mapping clients.
+> Data validated: 2026-03-21
 
-> **Quick Picks**
-> - **SOTA**: [PMTiles](https://github.com/protomaps/PMTiles) -- serverless tile serving from a single file on any CDN/S3
-> - **Free Best**: [Martin](https://github.com/maplibre/martin) -- blazing-fast Rust tile server, directly from PostGIS
-> - **Fastest Setup**: PMTiles -- upload one file to S3/CloudFlare R2, done
+## 30-Second Decision
+
+| I need... | Use this | Startup time |
+|-----------|----------|-------------|
+| Zero ops, upload and done | PMTiles on CDN | 10 min |
+| Free tiles, no self-hosting | MapTiler / Stadia Maps | 5 min (API key) |
+| Live data from PostGIS | Martin | 30 min (Docker) |
+| Full OGC enterprise | GeoServer | Days |
 
 ---
 
-## PMTiles (Protomaps) -- The Serverless Revolution
+## Detailed Guide (by startup time)
 
-**PMTiles** is a single-file archive format for tiled data that eliminates the need for a tile server entirely. Tiles are served via HTTP range requests from any static hosting (S3, CloudFlare R2, GitHub Pages, any CDN).
+### 1. PMTiles (Protomaps) -- The Serverless Revolution
 
-- **Spec:** [github.com/protomaps/PMTiles](https://github.com/protomaps/PMTiles)
-- **Key Advantage:** Zero infrastructure -- no tile server, no database, no Docker containers
-- **Supports:** Vector tiles (MVT) and raster tiles (PNG/JPEG/WebP)
-- **Ecosystem:** CLI tools, MapLibre plugin, Leaflet plugin, QGIS support
+No tile server needed. Upload a file. Done. Single-file archive serving tiles via HTTP range requests from any static hosting (S3, CloudFlare R2, GitHub Pages).
 
-### Why PMTiles Matters
-
-| Traditional Tiles | PMTiles |
-|-------------------|---------|
-| Tile server (Martin, TileServer GL, etc.) | No server needed |
-| Database (PostGIS) or directory of files | Single `.pmtiles` file |
-| Scaling = more servers | Scaling = CDN handles it |
-| Ops burden: Docker, monitoring, patching | Upload file, done |
-| Cost: server + bandwidth | Cost: storage + bandwidth only |
-
-### Generate PMTiles
+**Quick facts:** Zero ops | CDN-level scalability | Cost = storage + bandwidth only
 
 ```bash
-# Install tippecanoe (vector tile builder)
-brew install tippecanoe  # macOS
-# or build from source: github.com/felt/tippecanoe
-
-# Convert GeoJSON to PMTiles
+# Generate PMTiles from GeoJSON
 tippecanoe -o output.pmtiles -z14 -Z0 --drop-densest-as-needed input.geojson
-
-# Convert MBTiles to PMTiles
-pmtiles convert input.mbtiles output.pmtiles
-```
-
-### Use PMTiles with MapLibre
-
-```bash
-npm install pmtiles maplibre-gl
+# Upload to S3/R2
+aws s3 cp output.pmtiles s3://my-bucket/tiles/
 ```
 
 ```javascript
-import maplibregl from 'maplibre-gl';
 import { Protocol } from 'pmtiles';
-
-// Register the PMTiles protocol
-const protocol = new Protocol();
-maplibregl.addProtocol('pmtiles', protocol.tile);
+maplibregl.addProtocol('pmtiles', new Protocol().tile);
 
 const map = new maplibregl.Map({
   container: 'map',
   style: {
     version: 8,
     sources: {
-      mydata: {
-        type: 'vector',
-        url: 'pmtiles://https://your-cdn.com/data.pmtiles'
-      }
+      mydata: { type: 'vector', url: 'pmtiles://https://your-cdn.com/data.pmtiles' }
     },
     layers: [{
-      id: 'my-layer',
-      type: 'fill',
-      source: 'mydata',
+      id: 'my-layer', type: 'fill', source: 'mydata',
       'source-layer': 'your_layer_name',
       paint: { 'fill-color': '#088', 'fill-opacity': 0.6 }
     }]
@@ -77,220 +48,115 @@ const map = new maplibregl.Map({
 });
 ```
 
+| Traditional Tiles | PMTiles |
+|-------------------|---------|
+| Tile server + database | Single `.pmtiles` file |
+| Scaling = more servers | Scaling = CDN handles it |
+| Ops: Docker, monitoring | Upload file, done |
+| Cost: server + bandwidth | Cost: storage + bandwidth only |
+
+**Small project:** Best choice for static/infrequently-updated data. Zero infrastructure, CDN performance from day one.
+
+**Key caveats:**
+- Static data only -- must regenerate entire file for data changes
+- Range request support required (some corporate proxies strip them)
+- No dynamic filtering (unlike Martin)
+- Initial load requires 2-3 range requests (200-500ms on slow connections)
+- Always set `maxzoom` on MapLibre source to match tippecanoe `-z` value
+- **Anti-pattern:** Using PMTiles for frequently updated data. Use Martin + PostGIS instead.
+
 ---
 
-## Self-Hosted Tile Servers
+### 2. Cloud Tile Services (MapTiler, Stadia Maps, Mapbox)
 
-### Martin (MapLibre)
+API key and go. Zero self-hosting, professionally maintained basemaps.
 
-- **Source:** [github.com/maplibre/martin](https://github.com/maplibre/martin)
-- **Language:** Rust
-- **Key Features:** PostGIS sources, MBTiles, PMTiles, sprites, fonts, health checks
-- **Best For:** High-performance PostGIS vector tile serving
+| Provider | Free Tier | Vector | Satellite | Geocoding |
+|----------|-----------|--------|-----------|-----------|
+| MapTiler | 100K req/mo | Yes | Yes | Yes |
+| Stadia Maps | 200K credits/mo | Yes | No | Yes (Pelias) |
+| Mapbox | 200K req/mo | Yes | Yes | Yes |
+| Protomaps (DIY) | Unlimited (self-host) | Yes | No | No |
+
+**Small project:** Great for quick setup. Beautiful basemaps, free tiers generous for development.
+
+**Key caveats:**
+- Cost at scale: production traffic at 100K+ req/day gets expensive ($200-5000/mo)
+- Vendor lock-in (Mapbox GL JS v2+ is proprietary)
+- Provider downtime = your map is offline
+- **Anti-pattern:** Committing to Mapbox when MapLibre + self-hosted tiles works
+
+---
+
+### 3. Martin (MapLibre)
+
+Production standard for live PostGIS tile serving. Blazing-fast Rust server, vector tiles directly from PostGIS queries.
+
+**Quick facts:** Rust | PostGIS + MBTiles + PMTiles sources | 4/5 production-readiness (pre-1.0 but used by Felt)
 
 ```bash
-# Docker quickstart
 docker run -p 3000:3000 \
   -e DATABASE_URL=postgresql://user:pass@host/db \
   ghcr.io/maplibre/martin
-
-# Or with a config file
-martin --config config.yaml
 ```
 
-```yaml
-# martin config.yaml
-postgres:
-  connection_string: postgresql://user:pass@localhost/geodata
-  auto_publish:
-    tables: true
-    functions: true
+**Small project:** Worth the setup only if you need dynamic/live data from PostGIS. For static data, PMTiles is simpler.
 
-pmtiles:
-  sources:
-    basemap: /data/basemap.pmtiles
+**Key caveats:**
+- Requires PostGIS -- adds operational complexity
+- No built-in caching: MUST put Nginx/CDN in front for production
+- Pre-1.0 API: config format changes between versions
+- Connection pool exhaustion at high concurrency (tune `pool_size`)
+- No built-in authentication -- handle at reverse proxy layer
+- **Anti-pattern:** Running Martin without a caching proxy
 
-sprites:
-  paths: /data/sprites
+For detailed Martin production configuration -> [web-dev/backend-services.md](../web-dev/backend-services.md)
 
-fonts:
-  paths: /data/fonts
-```
+---
 
-### TileServer GL
-
-- **Source:** [github.com/maptiler/tileserver-gl](https://github.com/maptiler/tileserver-gl)
-- **Language:** Node.js
-- **Key Features:** MBTiles serving, style rendering, raster from vector, WMTS
-- **Best For:** Serving pre-generated MBTiles with raster fallback
-
-```bash
-# Docker quickstart
-docker run -it -v $(pwd)/data:/data -p 8080:8080 \
-  maptiler/tileserver-gl --mbtiles /data/tiles.mbtiles
-```
+## Low Priority / Legacy
 
 ### pg_tileserv
 
-- **Source:** [github.com/CrunchyData/pg_tileserv](https://github.com/CrunchyData/pg_tileserv)
-- **Language:** Go
-- **Key Features:** Direct PostGIS to MVT, function-based tiles, auto-discovery
-- **Best For:** Quick PostGIS vector tile serving without preprocessing
+Zero-config PostGIS tile serving for prototyping. Point at database, auto-discovers all tables.
 
-```bash
-export DATABASE_URL=postgresql://user:pass@localhost/geodata
-pg_tileserv
-# Auto-discovers all PostGIS tables and serves as vector tiles
-# Browse: http://localhost:7800
-```
+**Quick facts:** Go | 15 min setup | Production-readiness: 3/5
 
-### t-rex
+**Use for:** Quick prototyping when you already have PostGIS data. **Migrate to Martin for production** -- Martin surpasses pg_tileserv in every metric.
 
-- **Source:** [github.com/t-rex-tileserver/t-rex](https://github.com/t-rex-tileserver/t-rex)
-- **Language:** Rust
-- **Key Features:** PostGIS/GDAL sources, built-in cache, TOML config
-- **Best For:** Tile generation and caching from PostGIS/GDAL sources
+**Key caveats:**
+- Auto-discovery exposes ALL PostGIS tables -- security risk
+- No caching, no composite sources, no sprite/font serving
+- Less actively maintained than Martin
 
-```toml
-# t-rex config.toml
-[service.mvt]
-viewer = true
+### TileServer GL
 
-[datasource]
-type = "postgis"
-url = "postgresql://user:pass@localhost/geodata"
+Vector-to-raster rendering and WMTS. Unique ability to render vector tiles as raster images server-side.
 
-[[tileset]]
-name = "buildings"
+**Quick facts:** Node.js | MBTiles only | Production-readiness: 3/5
 
-[[tileset.layer]]
-name = "buildings"
-table_name = "buildings"
-geometry_field = "geom"
-geometry_type = "POLYGON"
-```
+Niche use: legacy WMTS clients needing raster output from vector styles. Node.js single-threaded performance limits throughput.
+
+### t-rex -- DEPRECATED
+
+**Deprecated:** Project is no longer maintained. Functionality has been absorbed by Martin. Do not use for new projects.
+
+### GeoServer
+
+Full OGC compliance (WMS, WFS, WCS, WMTS). Government agencies with OGC interoperability requirements often have no alternative. For modern web apps it is massive overkill.
+
+**Key caveats:** Java monolith (2-4GB JVM), XML configuration, startup in minutes, performance 10-50x slower than Martin for vector tiles, has had CVEs. Only use when OGC compliance is a hard requirement.
+
+For enterprise tile serving architecture -> [web-dev/backend-services.md](../web-dev/backend-services.md)
 
 ---
 
-## Tile Format Reference
+## PMTiles vs Martin -- When to Use Which
 
-### MVT (Mapbox Vector Tiles)
-
-The de facto standard for encoding vector tile data in Protocol Buffer format.
-
-- **Encoding:** Protocol Buffers (.pbf)
-- **Usage:** Served per tile via `/{z}/{x}/{y}.pbf` endpoints
-- **Spec:** [github.com/mapbox/vector-tile-spec](https://github.com/mapbox/vector-tile-spec)
-
-### MBTiles
-
-SQLite-based container format for storing tilesets as a single file.
-
-- **Format:** SQLite database with tiles stored as blobs
-- **Metadata:** Zoom range, bounds, format (pbf/png/jpg), attribution
-- **Usage:** Used by TileServer GL, Martin, QGIS, Mapbox, tippecanoe output
-
-```bash
-# Inspect an MBTiles file
-sqlite3 tiles.mbtiles "SELECT name, value FROM metadata;"
-# Extract a single tile
-sqlite3 tiles.mbtiles "SELECT tile_data FROM tiles WHERE zoom_level=10 AND tile_column=512 AND tile_row=512;"
-```
-
-### PMTiles
-
-Single-file archive with internal directory for serverless HTTP range request access.
-
-- **Format:** Custom binary format with clustered tile directory
-- **Advantage:** No server needed -- works from any HTTP host supporting range requests
-- **Versions:** v3 (current) with optional compression (gzip, brotli, zstd)
-
-### Format Comparison
-
-| Format | Server Required | Single File | Dynamic Sources | Compression | Best For |
-|--------|----------------|-------------|-----------------|-------------|----------|
-| `/{z}/{x}/{y}.pbf` | Yes (any HTTP) | No (directory) | No | Per-tile gzip | Traditional hosting |
-| MBTiles | Yes (tile server) | Yes | No | Per-tile (in blob) | Offline, sharing, archiving |
-| PMTiles | No (CDN/S3) | Yes | No | gzip/brotli/zstd | Serverless, static hosting |
-| PostGIS -> MVT | Yes (Martin, pg_tileserv) | No | Yes (live query) | Per-tile gzip | Dynamic/live data |
-
----
-
-## Cloud Tile Services
-
-### Mapbox
-
-- **Website:** [mapbox.com](https://www.mapbox.com)
-- **Tiles:** Vector and raster, satellite, terrain, traffic
-- **Free Tier:** 200,000 tile requests/month for web
-- **Pricing:** Usage-based beyond free tier
-
-### MapTiler
-
-- **Website:** [maptiler.com](https://www.maptiler.com)
-- **Tiles:** Vector, raster, hillshade, satellite, OpenStreetMap-based
-- **Free Tier:** 100,000 tile requests/month
-- **Pricing:** Plans from free to enterprise; also offers self-hosted MapTiler Server
-
-### Stadia Maps
-
-- **Website:** [stadiamaps.com](https://stadiamaps.com)
-- **Tiles:** Vector and raster, Stamen styles (Toner, Watercolor, Terrain)
-- **Free Tier:** 200,000 credits/month for non-commercial
-- **Pricing:** Usage-based for commercial
-
-### Cloud Pricing Quick Comparison
-
-| Provider | Free Tier | Vector Tiles | Satellite | Geocoding | Routing |
-|----------|-----------|-------------|-----------|-----------|---------|
-| Mapbox | 200k req/mo | Yes | Yes | Yes | Yes |
-| MapTiler | 100k req/mo | Yes | Yes | Yes | No |
-| Stadia Maps | 200k credits/mo | Yes | No | Yes (Pelias) | No |
-| Protomaps (DIY) | Unlimited (self-host) | Yes | No | No | No |
-
----
-
-## PMTiles vs Traditional Tile Servers
-
-| Aspect | PMTiles on CDN | Martin/pg_tileserv | TileServer GL |
-|--------|---------------|-------------------|---------------|
-| **Setup** | Upload file to S3/R2 | Docker + PostGIS | Docker + MBTiles |
-| **Dynamic data** | No (rebuild file) | Yes (live queries) | No (static MBTiles) |
-| **Scalability** | CDN-level (infinite) | Horizontal scaling needed | Horizontal scaling needed |
-| **Cost at scale** | Storage + CDN bandwidth | Compute + DB + bandwidth | Compute + bandwidth |
-| **Latency** | CDN edge, ~10-50ms | Server location dependent | Server location dependent |
-| **Best when** | Data changes rarely | Data changes often | Need raster fallback |
-
-> **Bottom line:** If your data does not change frequently, PMTiles on a CDN is the simplest, cheapest, and most scalable approach. If you need live queries from PostGIS, Martin is the SOTA self-hosted server.
-
----
-
-## Comparison Table
-
-| Server | Vector | Raster | Source | Protocol | Best For |
-|--------|--------|--------|--------|----------|----------|
-| PMTiles | Yes | Yes | Static file | HTTP Range | Serverless / static hosting |
-| Martin | Yes | No | PostGIS, MBTiles, PMTiles | HTTP | High-perf PostGIS serving |
-| TileServer GL | Yes | Yes (rendered) | MBTiles | HTTP, WMTS | MBTiles with raster fallback |
-| pg_tileserv | Yes | No | PostGIS | HTTP | Zero-config PostGIS tiles |
-| t-rex | Yes | No | PostGIS, GDAL | HTTP | Tile generation + caching |
-| Mapbox | Yes | Yes | Cloud | HTTP | Full-stack cloud mapping |
-| MapTiler | Yes | Yes | Cloud | HTTP | Cloud tiles, self-host option |
-| Stadia Maps | Yes | Yes | Cloud | HTTP | Free non-commercial tiles |
-
-## Deployment Quick Reference
-
-```bash
-# PMTiles: Upload and serve (zero ops)
-aws s3 cp output.pmtiles s3://my-bucket/tiles/
-# Use directly: pmtiles://https://my-bucket.s3.amazonaws.com/tiles/output.pmtiles
-
-# Martin: Docker Compose
-docker compose up -d  # with PostGIS + Martin in docker-compose.yml
-
-# TileServer GL: One-liner
-docker run -v ./tiles:/data -p 8080:8080 maptiler/tileserver-gl
-
-# pg_tileserv: Binary
-DATABASE_URL=postgres://... pg_tileserv --port 7800
-```
+| Aspect | PMTiles on CDN | Martin + PostGIS |
+|--------|---------------|------------------|
+| Setup | Upload file to S3/R2 | Docker + PostGIS |
+| Dynamic data | No (rebuild file) | Yes (live queries) |
+| Scalability | CDN-level (infinite) | Horizontal scaling needed |
+| Cost | Storage + bandwidth | Compute + DB + bandwidth |
+| **Best when** | **Data changes rarely** | **Data changes often** |

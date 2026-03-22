@@ -1,19 +1,22 @@
-# Testing & Security for GIS Applications — 2025 Complete Guide
+# Testing & Security -- Enterprise Reference
 
-GIS applications present unique testing challenges (map rendering, spatial queries, geometry validation) and security concerns (SQL injection in spatial queries, GeoJSON injection, location privacy). This guide covers comprehensive testing strategies and security best practices.
+> Data validated: 2026-03-21
 
-> **Quick Picks**
-> - **Unit testing:** Vitest + Turf.js for spatial functions
-> - **Integration testing:** Testcontainers + PostGIS
-> - **E2E map testing:** Playwright with MapLibre page objects
-> - **Auth:** JWT + spatial claims (bbox/region) + PostGIS RLS
-> - **Security:** Parameterized ST_ functions, GeoJSON validation, CORS for tiles
+## 30-Second Decision
+
+**Unit testing:** Vitest + Turf.js for spatial functions. **Integration testing:** Testcontainers + PostGIS (never mock spatial SQL). **E2E map testing:** Playwright with MapLibre page objects. **Input validation:** Zod for GeoJSON schema validation at API boundaries. **Auth:** JWT + spatial claims (bbox/region) + PostGIS RLS (be aware of performance cost). **Security essentials:** Parameterized ST_ functions, GeoJSON size/coordinate validation, CORS for tile endpoints, bbox area rate limiting.
 
 ---
 
-## Unit Testing Spatial Code
+## Tier 1 -- Production First Choices
 
-### Vitest for Spatial Functions
+---
+
+### Vitest -- Unit Testing Spatial Code
+
+The standard unit testing framework for modern JavaScript/TypeScript projects. Fast, Vite-native, ESM-first. For spatial testing, combine with Turf.js for geometry assertions.
+
+**Why Tier 1:** The standard choice for spatial unit testing. Fast execution, excellent TypeScript support, and Turf.js provides a comprehensive spatial assertion toolkit.
 
 ```typescript
 // __tests__/spatial.test.ts
@@ -72,135 +75,18 @@ describe('Spatial utilities', () => {
 });
 ```
 
-### Testing GeoJSON Validation with Zod
-
-```typescript
-// schemas/geojson.ts
-import { z } from 'zod';
-
-const PositionSchema = z.tuple([z.number(), z.number()]).or(z.tuple([z.number(), z.number(), z.number()]));
-
-const PointSchema = z.object({
-  type: z.literal('Point'),
-  coordinates: PositionSchema,
-});
-
-const PolygonSchema = z.object({
-  type: z.literal('Polygon'),
-  coordinates: z.array(z.array(PositionSchema)).refine(
-    (rings) => rings.every((ring) => {
-      if (ring.length < 4) return false;
-      const first = ring[0];
-      const last = ring[ring.length - 1];
-      return first[0] === last[0] && first[1] === last[1]; // Ring must be closed
-    }),
-    { message: 'Polygon rings must have >= 4 positions and be closed' }
-  ),
-});
-
-const GeometrySchema = z.discriminatedUnion('type', [
-  PointSchema,
-  z.object({ type: z.literal('LineString'), coordinates: z.array(PositionSchema).min(2) }),
-  PolygonSchema,
-  z.object({ type: z.literal('MultiPoint'), coordinates: z.array(PositionSchema) }),
-  z.object({ type: z.literal('MultiLineString'), coordinates: z.array(z.array(PositionSchema)) }),
-  z.object({ type: z.literal('MultiPolygon'), coordinates: z.array(z.array(z.array(PositionSchema))) }),
-]);
-
-export const FeatureSchema = z.object({
-  type: z.literal('Feature'),
-  geometry: GeometrySchema,
-  properties: z.record(z.unknown()).nullable(),
-});
-
-export const FeatureCollectionSchema = z.object({
-  type: z.literal('FeatureCollection'),
-  features: z.array(FeatureSchema),
-});
-
-// __tests__/validation.test.ts
-import { describe, it, expect } from 'vitest';
-import { FeatureSchema, FeatureCollectionSchema } from '../schemas/geojson';
-
-describe('GeoJSON validation', () => {
-  it('accepts valid Point feature', () => {
-    const result = FeatureSchema.safeParse({
-      type: 'Feature',
-      geometry: { type: 'Point', coordinates: [116.4, 39.9] },
-      properties: { name: 'Beijing' },
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it('rejects unclosed polygon ring', () => {
-    const result = FeatureSchema.safeParse({
-      type: 'Feature',
-      geometry: {
-        type: 'Polygon',
-        coordinates: [[[0, 0], [1, 0], [1, 1], [0, 1]]], // Not closed
-      },
-      properties: null,
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it('rejects coordinates outside valid range', () => {
-    const validated = FeatureSchema.safeParse({
-      type: 'Feature',
-      geometry: { type: 'Point', coordinates: [999, 999] },
-      properties: null,
-    });
-    // Note: GeoJSON spec allows any coordinates, but you may want custom validation
-    expect(validated.success).toBe(true); // Valid GeoJSON, may want business rule check
-  });
-});
-```
-
-### Snapshot Testing for Map Styles
-
-```typescript
-// __tests__/mapStyle.test.ts
-import { describe, it, expect } from 'vitest';
-import baseStyle from '../styles/base.json';
-
-describe('Map style', () => {
-  it('has required sources', () => {
-    expect(Object.keys(baseStyle.sources)).toContain('basemap');
-    expect(Object.keys(baseStyle.sources)).toContain('buildings');
-  });
-
-  it('has layers in correct order', () => {
-    const layerIds = baseStyle.layers.map((l: any) => l.id);
-    const waterIdx = layerIds.indexOf('water-fill');
-    const buildingsIdx = layerIds.indexOf('buildings-fill');
-    const labelsIdx = layerIds.indexOf('labels');
-    expect(waterIdx).toBeLessThan(buildingsIdx);
-    expect(buildingsIdx).toBeLessThan(labelsIdx);
-  });
-
-  it('matches snapshot', () => {
-    expect(baseStyle).toMatchSnapshot();
-  });
-
-  it('all paint properties are valid', () => {
-    for (const layer of baseStyle.layers) {
-      if (layer.paint) {
-        // Check no undefined values
-        for (const [key, value] of Object.entries(layer.paint)) {
-          expect(value).toBeDefined();
-          expect(key).toMatch(/^(fill|line|circle|text|icon|raster|heatmap|hillshade|background)-/);
-        }
-      }
-    }
-  });
-});
-```
+**Caveats:**
+- **No WebGL in Node.js.** Vitest runs in Node.js (or jsdom). No WebGL context. Cannot test actual map rendering. Must mock the map instance or use E2E tests for visual verification.
+- **Spatial test fixtures are tedious.** Creating GeoJSON fixtures for edge cases (antimeridian crossing, polar regions, self-intersecting polygons) requires spatial domain knowledge. No standard fixture library exists for spatial edge cases.
+- **Floating-point precision.** Spatial calculations produce floating-point results. Use `toBeCloseTo()` instead of `toBe()` for coordinate and area assertions.
 
 ---
 
-## Integration Testing
+### Testcontainers + PostGIS -- Integration Testing
 
-### Testcontainers + PostGIS
+Spin up a real PostGIS database in Docker for integration tests. Tests run against the actual spatial engine -- no mocking spatial SQL.
+
+**Why Tier 1:** The only way to reliably test spatial SQL queries without mocking. Catches wrong `ST_DWithin` vs `ST_Distance` queries, index misuse, and projection bugs that mocks would miss.
 
 ```typescript
 // __tests__/integration/spatial-queries.test.ts
@@ -230,7 +116,6 @@ beforeAll(async () => {
     password: 'test',
   });
 
-  // Setup schema
   await pool.query(`
     CREATE TABLE features (
       id SERIAL PRIMARY KEY,
@@ -280,16 +165,6 @@ describe('Spatial queries', () => {
     expect(result.rows[0].distance_m).toBeLessThan(5000);
   });
 
-  it('ST_Intersects with polygon', async () => {
-    const result = await pool.query(`
-      SELECT name FROM features
-      WHERE ST_Intersects(geom,
-        ST_GeomFromText('POLYGON((116.35 39.87, 116.42 39.87, 116.42 39.93, 116.35 39.93, 116.35 39.87))', 4326)
-      )
-    `);
-    expect(result.rows.some((r: any) => r.name === 'School B')).toBe(true);
-  });
-
   it('GeoJSON output is valid', async () => {
     const result = await pool.query(`
       SELECT jsonb_build_object(
@@ -310,79 +185,23 @@ describe('Spatial queries', () => {
 });
 ```
 
-### API Integration Testing
-
-```typescript
-// __tests__/integration/api.test.ts
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import request from 'supertest';
-import { app } from '../../src/app';
-
-describe('Feature API', () => {
-  it('GET /features returns FeatureCollection', async () => {
-    const res = await request(app)
-      .get('/features')
-      .query({ bbox: '116.3,39.8,116.5,40.0' })
-      .expect(200);
-
-    expect(res.body.type).toBe('FeatureCollection');
-    expect(Array.isArray(res.body.features)).toBe(true);
-  });
-
-  it('GET /features rejects invalid bbox', async () => {
-    await request(app)
-      .get('/features')
-      .query({ bbox: 'invalid' })
-      .expect(400);
-  });
-
-  it('GET /features respects limit', async () => {
-    const res = await request(app)
-      .get('/features')
-      .query({ bbox: '0,0,180,90', limit: '5' })
-      .expect(200);
-
-    expect(res.body.features.length).toBeLessThanOrEqual(5);
-  });
-
-  it('POST /features creates valid spatial feature', async () => {
-    const res = await request(app)
-      .post('/features')
-      .send({
-        type: 'Feature',
-        properties: { name: 'Test Point' },
-        geometry: { type: 'Point', coordinates: [116.4, 39.9] },
-      })
-      .expect(201);
-
-    expect(res.body.id).toBeDefined();
-  });
-
-  it('GET /features/nearest returns ordered by distance', async () => {
-    const res = await request(app)
-      .get('/features/nearest')
-      .query({ lng: '116.4', lat: '39.9', radius_m: '5000' })
-      .expect(200);
-
-    const distances = res.body.features.map((f: any) => f.properties.distance_m);
-    for (let i = 1; i < distances.length; i++) {
-      expect(distances[i]).toBeGreaterThanOrEqual(distances[i - 1]);
-    }
-  });
-});
-```
+**Caveats:**
+- **CI Docker requirement.** GitHub Actions supports Docker natively. GitLab CI requires `services: docker:dind`. Some CI environments don't support Docker at all.
+- **Container startup time.** PostGIS container takes 5-15 seconds to start. For fast test suites, this is significant. Use `reuse: true` for local development.
+- **Test isolation.** Each test suite should get a fresh database or use transactions. Without this, spatial tests interfere with each other (residual features from previous tests).
 
 ---
 
-## E2E Testing Map UIs
+### Playwright -- E2E Map Testing
 
-### Playwright for Map Applications
+Microsoft's E2E testing framework. The best option for testing map rendering, interaction, and visual regression in real browsers.
+
+**Why Tier 1:** The only reliable way to test WebGL-rendered maps in real browsers. The MapPage pattern below provides reusable map interaction primitives.
 
 ```typescript
 // e2e/map.spec.ts
 import { test, expect, Page } from '@playwright/test';
 
-// Page object for map interactions
 class MapPage {
   constructor(private page: Page) {}
 
@@ -392,7 +211,6 @@ class MapPage {
   }
 
   async waitForMapLoad() {
-    // Wait for MapLibre to finish loading tiles
     await this.page.waitForFunction(() => {
       const map = (window as any).__map;
       return map && map.loaded() && !map.isMoving();
@@ -424,14 +242,6 @@ class MapPage {
       const map = (window as any).__map;
       map.zoomTo(z, { duration: 0 });
     }, level);
-    await this.waitForMapLoad();
-  }
-
-  async panTo(lng: number, lat: number) {
-    await this.page.evaluate(([lng, lat]) => {
-      const map = (window as any).__map;
-      map.flyTo({ center: [lng, lat], duration: 0 });
-    }, [lng, lat]);
     await this.waitForMapLoad();
   }
 
@@ -478,32 +288,118 @@ test.describe('Map Application', () => {
   });
 
   test('layer toggle hides/shows features', async ({ page }) => {
-    // Toggle buildings layer off
     await page.click('[data-testid="layer-toggle-buildings"]');
     await mapPage.waitForMapLoad();
     const features = await mapPage.getRenderedFeatures('buildings-fill');
     expect(features.length).toBe(0);
 
-    // Toggle back on
     await page.click('[data-testid="layer-toggle-buildings"]');
     await mapPage.waitForMapLoad();
     const featuresAfter = await mapPage.getRenderedFeatures('buildings-fill');
     expect(featuresAfter.length).toBeGreaterThan(0);
   });
 
-  test('visual regression — map screenshot', async () => {
+  test('visual regression -- map screenshot', async () => {
     await mapPage.zoomTo(12);
     await mapPage.screenshotMap('map-z12');
-    // Compare with baseline using pixelmatch or Percy
   });
 });
 ```
+
+**Caveats:**
+- **Map loading flakiness.** WebGL-rendered maps have non-deterministic rendering timing. `waitForFunction(() => map.loaded())` can still miss font/sprite loading. Add extra stability waits.
+- **Visual regression instability.** Screenshot comparisons of maps are inherently flaky. Label placement, anti-aliasing, and tile rendering order can differ between runs. Increase pixel threshold or mask dynamic areas.
+- **Browser memory.** Running 10+ map tests in parallel can consume 4-8GB RAM. Limit Playwright workers on CI.
+- **No map-aware selectors.** Must use `page.evaluate()` to interact with map internals. The MapPage pattern above helps but is custom code to maintain.
+
+---
+
+### Zod -- GeoJSON Validation
+
+Runtime schema validation for GeoJSON input. Prevents malformed geometry from reaching the database and provides clear error messages for API consumers.
+
+**Why Tier 1:** Essential at the API boundary. Every spatial endpoint that accepts GeoJSON from clients must validate before passing to PostGIS. Prevents both injection attacks and data corruption.
+
+```typescript
+// schemas/geojson.ts
+import { z } from 'zod';
+
+const PositionSchema = z.tuple([z.number(), z.number()])
+  .or(z.tuple([z.number(), z.number(), z.number()]));
+
+const PointSchema = z.object({
+  type: z.literal('Point'),
+  coordinates: PositionSchema,
+});
+
+const PolygonSchema = z.object({
+  type: z.literal('Polygon'),
+  coordinates: z.array(z.array(PositionSchema)).refine(
+    (rings) => rings.every((ring) => {
+      if (ring.length < 4) return false;
+      const first = ring[0];
+      const last = ring[ring.length - 1];
+      return first[0] === last[0] && first[1] === last[1]; // Ring must be closed
+    }),
+    { message: 'Polygon rings must have >= 4 positions and be closed' }
+  ),
+});
+
+const GeometrySchema = z.discriminatedUnion('type', [
+  PointSchema,
+  z.object({ type: z.literal('LineString'), coordinates: z.array(PositionSchema).min(2) }),
+  PolygonSchema,
+  z.object({ type: z.literal('MultiPoint'), coordinates: z.array(PositionSchema) }),
+  z.object({ type: z.literal('MultiLineString'), coordinates: z.array(z.array(PositionSchema)) }),
+  z.object({ type: z.literal('MultiPolygon'), coordinates: z.array(z.array(z.array(PositionSchema))) }),
+]);
+
+export const FeatureSchema = z.object({
+  type: z.literal('Feature'),
+  geometry: GeometrySchema,
+  properties: z.record(z.unknown()).nullable(),
+});
+
+export const FeatureCollectionSchema = z.object({
+  type: z.literal('FeatureCollection'),
+  features: z.array(FeatureSchema),
+});
+
+// Tests
+describe('GeoJSON validation', () => {
+  it('accepts valid Point feature', () => {
+    const result = FeatureSchema.safeParse({
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [116.4, 39.9] },
+      properties: { name: 'Beijing' },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects unclosed polygon ring', () => {
+    const result = FeatureSchema.safeParse({
+      type: 'Feature',
+      geometry: {
+        type: 'Polygon',
+        coordinates: [[[0, 0], [1, 0], [1, 1], [0, 1]]], // Not closed!
+      },
+      properties: null,
+    });
+    expect(result.success).toBe(false);
+  });
+});
+```
+
+**Caveats:**
+- **GeoJSON spec allows any coordinate values.** The spec doesn't restrict coordinate ranges. You need additional business logic to validate that coordinates are on Earth (-180 to 180, -90 to 90).
+- **Performance with large geometries.** Validating a 100K-vertex polygon with Zod has measurable overhead. For bulk imports, validate a sample or validate server-side only.
+- **Missing topology validation.** Zod validates JSON structure, not geometric validity. Self-intersecting polygons and ring orientation errors pass Zod but fail PostGIS.
 
 ---
 
 ## Authentication & Authorization
 
-### Spatial RBAC — Row-Level Security
+### Spatial RBAC -- Row-Level Security
 
 ```sql
 -- Users have access to specific geographic regions
@@ -515,7 +411,6 @@ CREATE TABLE user_regions (
     PRIMARY KEY (user_id, region_name)
 );
 
--- Enable RLS on features table
 ALTER TABLE features ENABLE ROW LEVEL SECURITY;
 
 -- Read policy: users see features within their assigned regions
@@ -554,10 +449,14 @@ USING (
 );
 ```
 
+**Caveats:**
+- **Performance impact is significant.** Spatial RLS policies with `ST_Intersects` are evaluated for every row returned. On tables with 1M+ rows, spatial RLS can cause 10-100x query time increase compared to queries without RLS. Mitigations: use partial GiST indexes on `user_regions.geom`, cache region geometries in application layer, and prefer simpler attribute-based RLS (e.g., `region_id = ANY(user_regions)`) where possible. Benchmark your specific table size before committing to spatial RLS.
+- **Tile server bypass.** RLS protects the database, not the tile server. Martin tiles bypass RLS entirely. Tile access control must be at the Nginx/CDN layer.
+- **Anti-pattern: Complex spatial RLS on high-throughput tables.** Spatial RLS policies on tables that Martin or Debezium reads cause significant overhead. Use simpler attribute-based RLS where possible.
+
 ### JWT with Spatial Claims
 
 ```typescript
-// Generate JWT with spatial constraints
 import jwt from 'jsonwebtoken';
 
 function generateSpatialToken(user: {
@@ -569,10 +468,7 @@ function generateSpatialToken(user: {
     sub: user.id,
     roles: user.roles,
     spatial: {
-      regions: user.regions.map((r) => ({
-        name: r.name,
-        bbox: r.bbox,
-      })),
+      regions: user.regions.map((r) => ({ name: r.name, bbox: r.bbox })),
       maxZoom: user.roles.includes('premium') ? 20 : 14,
       maxFeatures: user.roles.includes('premium') ? 10000 : 1000,
     },
@@ -588,7 +484,6 @@ function spatialAuth(req: Request, res: Response, next: NextFunction) {
     const payload = jwt.verify(token, process.env.JWT_SECRET!) as any;
     req.user = payload;
 
-    // Validate bbox request is within user's regions
     const bbox = req.query.bbox?.toString().split(',').map(Number);
     if (bbox) {
       const allowed = payload.spatial.regions.some((r: any) =>
@@ -607,25 +502,20 @@ function spatialAuth(req: Request, res: Response, next: NextFunction) {
 }
 ```
 
-### Martin + Nginx Auth — Protecting Tile Endpoints
+### Protecting Tile Endpoints (Nginx + JWT)
 
 ```nginx
 # Nginx: JWT validation for tile access
 location /tiles/ {
-    # Validate JWT
     auth_jwt "Tile Access";
     auth_jwt_key_file /etc/nginx/jwt-key.pub;
 
-    # Extract spatial claims
     set $user_region $jwt_claim_spatial_regions;
 
-    # Proxy to Martin
     proxy_pass http://martin:3000/;
     proxy_cache tiles;
     proxy_cache_valid 200 24h;
-
-    # Vary cache by user region
-    proxy_cache_key "$uri$user_region";
+    proxy_cache_key "$uri$user_region"; # Vary cache by user region
 }
 
 # Public tiles (basemap, no auth required)
@@ -643,7 +533,7 @@ location /tiles/basemap/ {
 ### SQL Injection Prevention in Spatial Queries
 
 ```python
-# BAD: String concatenation (SQL injection vulnerability)
+# BAD: String concatenation (SQL injection vulnerability!)
 @app.get("/features/bad")
 async def bad_query(bbox: str):
     result = await db.fetch(
@@ -656,7 +546,6 @@ async def good_query(bbox: str):
     coords = [float(c) for c in bbox.split(",")]
     if len(coords) != 4:
         raise HTTPException(400, "Invalid bbox")
-    # Validate coordinate ranges
     if not all(-180 <= coords[i] <= 180 for i in [0, 2]):
         raise HTTPException(400, "Invalid longitude")
     if not all(-90 <= coords[i] <= 90 for i in [1, 3]):
@@ -668,30 +557,28 @@ async def good_query(bbox: str):
     )
 ```
 
+**Caveats:**
+- **Spatial functions are SQL injection vectors.** Any ST_ function accepting user input (bbox, WKT, coordinates) must use parameterized queries. String interpolation of bbox strings is the #1 spatial SQL injection vulnerability.
+- **WKT/GeoJSON parsing.** Never pass user-supplied WKT directly to `ST_GeomFromText()` without validation. Malformed WKT can cause PostgreSQL errors or unexpected behavior.
+
 ### GeoJSON Input Validation
 
 ```typescript
-// Validate user-submitted GeoJSON
-import { z } from 'zod';
-
 const MAX_COORDINATES = 10000;
 const MAX_FEATURES = 100;
 const MAX_GEOMETRY_SIZE = 1024 * 1024; // 1MB
 
 function validateGeoJSON(input: unknown): { valid: boolean; error?: string } {
-  // Size check
   const size = JSON.stringify(input).length;
   if (size > MAX_GEOMETRY_SIZE) {
     return { valid: false, error: `GeoJSON exceeds ${MAX_GEOMETRY_SIZE} bytes` };
   }
 
-  // Schema check
   const parsed = FeatureCollectionSchema.safeParse(input);
   if (!parsed.success) {
     return { valid: false, error: parsed.error.message };
   }
 
-  // Feature count check
   if (parsed.data.features.length > MAX_FEATURES) {
     return { valid: false, error: `Max ${MAX_FEATURES} features allowed` };
   }
@@ -705,13 +592,6 @@ function validateGeoJSON(input: unknown): { valid: boolean; error?: string } {
     }
   }
 
-  // Coordinate range check
-  for (const feature of parsed.data.features) {
-    if (!validateCoordinateRanges(feature.geometry)) {
-      return { valid: false, error: 'Coordinates out of valid range' };
-    }
-  }
-
   return { valid: true };
 }
 
@@ -719,21 +599,12 @@ function countCoordinates(geometry: any): number {
   const coords = JSON.stringify(geometry.coordinates);
   return (coords.match(/\[[\d.-]+,[\d.-]+/g) || []).length;
 }
-
-function validateCoordinateRanges(geometry: any): boolean {
-  const flat = JSON.stringify(geometry.coordinates);
-  const numbers = flat.match(/-?\d+\.?\d*/g)?.map(Number) || [];
-  // Simple check: no coordinate > 180 or < -180
-  return numbers.every(n => Math.abs(n) <= 180);
-}
 ```
 
 ### CORS for Tile Servers
 
 ```nginx
-# Nginx CORS for tile endpoints
 location /tiles/ {
-    # Specific origins (preferred)
     set $cors_origin "";
     if ($http_origin ~* "^https://(app\.example\.com|dashboard\.example\.com)$") {
         set $cors_origin $http_origin;
@@ -756,12 +627,7 @@ location /tiles/ {
 ### Rate Limiting Spatial APIs
 
 ```python
-# Rate limit by bbox area (prevent requesting huge areas)
-from fastapi import Request, HTTPException
-from functools import wraps
-
 MAX_BBOX_AREA_DEG2 = 100  # ~100 square degrees
-MAX_REQUESTS_PER_MINUTE = 60
 
 def spatial_rate_limit(func):
     @wraps(func)
@@ -775,72 +641,11 @@ def spatial_rate_limit(func):
                 )
         return await func(*args, bbox=bbox, **kwargs)
     return wrapper
-
-@app.get("/features")
-@spatial_rate_limit
-async def get_features(bbox: str = None):
-    # ... query
-    pass
 ```
 
-### Secure File Upload Validation
-
-```python
-# Validate uploaded spatial files
-import fiona
-import geopandas as gpd
-from pathlib import Path
-
-ALLOWED_EXTENSIONS = {'.geojson', '.json', '.gpkg', '.shp', '.zip', '.fgb'}
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
-MAX_FEATURES = 100000
-
-async def validate_spatial_upload(file_path: Path) -> dict:
-    errors = []
-
-    # Extension check
-    if file_path.suffix.lower() not in ALLOWED_EXTENSIONS:
-        errors.append(f"Invalid file type: {file_path.suffix}")
-        return {"valid": False, "errors": errors}
-
-    # Size check
-    if file_path.stat().st_size > MAX_FILE_SIZE:
-        errors.append(f"File too large (max {MAX_FILE_SIZE // 1024 // 1024}MB)")
-        return {"valid": False, "errors": errors}
-
-    try:
-        gdf = gpd.read_file(file_path)
-
-        # Feature count
-        if len(gdf) > MAX_FEATURES:
-            errors.append(f"Too many features: {len(gdf)} (max {MAX_FEATURES})")
-
-        # Geometry validity
-        invalid = gdf[~gdf.geometry.is_valid]
-        if len(invalid) > 0:
-            errors.append(f"{len(invalid)} invalid geometries found")
-
-        # CRS check
-        if gdf.crs is None:
-            errors.append("No CRS defined")
-        elif gdf.crs.to_epsg() not in [4326, 3857, None]:
-            # Auto-reproject to 4326
-            gdf = gdf.to_crs(epsg=4326)
-
-        # Bounds check (must be on Earth)
-        bounds = gdf.total_bounds
-        if bounds[0] < -180 or bounds[2] > 180 or bounds[1] < -90 or bounds[3] > 90:
-            errors.append("Coordinates outside valid range")
-
-    except Exception as e:
-        errors.append(f"Failed to read file: {str(e)}")
-
-    return {
-        "valid": len(errors) == 0,
-        "errors": errors,
-        "feature_count": len(gdf) if 'gdf' in dir() else 0,
-    }
-```
+**Caveats:**
+- **Bbox area-based rate limiting.** Without this, a single request with a world-spanning bbox can return millions of features, crashing the server. Always limit bbox area and feature count.
+- **Tile endpoint abuse.** Bots scanning tile endpoints can generate massive CDN bills. Rate limit by IP and require API keys for non-public tiles.
 
 ---
 
@@ -849,15 +654,13 @@ async def validate_spatial_upload(file_path: Path) -> dict:
 ### Spatial Anonymization
 
 ```python
-# Jittering: add random noise to coordinates
 import numpy as np
 
 def jitter_coordinates(gdf, max_distance_m=100):
-    """Add random displacement to point coordinates"""
+    """Add random displacement to point coordinates for privacy"""
     gdf_3857 = gdf.to_crs(3857)
     angles = np.random.uniform(0, 2 * np.pi, len(gdf_3857))
     distances = np.random.uniform(0, max_distance_m, len(gdf_3857))
-
     gdf_3857.geometry = gdf_3857.geometry.translate(
         xoff=distances * np.cos(angles),
         yoff=distances * np.sin(angles),
@@ -865,33 +668,24 @@ def jitter_coordinates(gdf, max_distance_m=100):
     return gdf_3857.to_crs(4326)
 
 # Grid aggregation: convert points to grid cells
-def aggregate_to_grid(gdf, cell_size_m=500):
-    """Aggregate points to hexagonal grid"""
+def aggregate_to_grid(gdf, resolution=9):
+    """Aggregate points to H3 hexagonal grid"""
     import h3
-    gdf['h3_index'] = gdf.geometry.apply(
-        lambda p: h3.latlng_to_cell(p.y, p.x, 9)  # ~150m resolution
-    )
-    aggregated = gdf.groupby('h3_index').agg(
-        count=('id', 'count'),
-        avg_value=('value', 'mean'),
-    ).reset_index()
-    aggregated['geometry'] = aggregated['h3_index'].apply(
-        lambda h: Polygon(h3.cell_to_boundary(h))
-    )
+    gdf['h3_index'] = gdf.geometry.apply(lambda p: h3.latlng_to_cell(p.y, p.x, resolution))
+    aggregated = gdf.groupby('h3_index').agg(count=('id', 'count'), avg_value=('value', 'mean')).reset_index()
+    aggregated['geometry'] = aggregated['h3_index'].apply(lambda h: Polygon(h3.cell_to_boundary(h)))
     return gpd.GeoDataFrame(aggregated, geometry='geometry', crs=4326)
 ```
 
 ### GDPR for Location Data
 
 ```typescript
-// Data retention and erasure for location data
 class LocationDataManager {
   // Right to erasure: delete all location data for a user
   async eraseUserData(userId: string) {
     await db.query('DELETE FROM user_tracks WHERE user_id = $1', [userId]);
     await db.query('DELETE FROM user_locations WHERE user_id = $1', [userId]);
     await db.query('DELETE FROM geofence_events WHERE user_id = $1', [userId]);
-    // Invalidate cached tiles that may contain user data
     await this.invalidateUserTileCache(userId);
   }
 
@@ -911,8 +705,8 @@ class LocationDataManager {
   // Auto-delete old location data
   async cleanupOldData(retentionDays: number = 90) {
     await db.query(
-      `DELETE FROM user_locations
-       WHERE created_at < NOW() - INTERVAL '${retentionDays} days'`
+      `DELETE FROM user_locations WHERE created_at < NOW() - make_interval(days => $1)`,
+      [retentionDays]
     );
   }
 }
@@ -921,21 +715,24 @@ class LocationDataManager {
 ### Audit Logging
 
 ```sql
--- Audit log for spatial data access
 CREATE TABLE spatial_audit_log (
     id BIGSERIAL PRIMARY KEY,
     user_id UUID,
     action TEXT, -- 'read', 'create', 'update', 'delete', 'export'
     table_name TEXT,
     feature_id INTEGER,
-    bbox TEXT, -- requested bbox
-    feature_count INTEGER, -- number of features returned
+    bbox TEXT,
+    feature_count INTEGER,
     ip_address INET,
     user_agent TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Index for compliance queries
 CREATE INDEX ON spatial_audit_log (user_id, created_at);
 CREATE INDEX ON spatial_audit_log (table_name, action, created_at);
 ```
+
+**Caveats:**
+- **Location data is PII.** Under GDPR, GPS coordinates that can identify an individual's home or workplace are personal data. Must implement right to erasure, data minimization, and retention policies.
+- **Coordinate precision leaks identity.** 6 decimal places = 0.11m precision. For anonymized data, round to 3-4 decimal places (11-110m).
+- **Audit log storage.** High-traffic spatial APIs can generate millions of audit log entries. Use TimescaleDB hypertables or partition by month.
