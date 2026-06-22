@@ -289,6 +289,7 @@ def geocode_robust(raw_address: str) -> dict:
 | Google Geocoding API | Excellent | Best | $200 credit/mo | No (must loop) | Yes | Places API | $5/1000 |
 | HERE Geocoding | Excellent | Excellent | 250K req/mo | Yes | Yes | Yes | $1/1000 after |
 | Mapbox Geocoding | Very Good | Very Good | 100K req/mo | No | Yes | Yes | $0.75/1000 |
+| Mapbase | Very Good | EU-focused | Free tier | Yes | Yes | Yes | Usage-based |
 | ArcGIS World Geocoder | Very Good | Good | 20K credits/mo | Yes | Yes | Yes | Credits-based |
 | TomTom Geocoding | Good | Very Good | 2500 req/day | Yes | Yes | Yes | $0.42/1000 |
 | Pelias (self-hosted) | Depends on data | OSM-limited | Unlimited | Yes | Yes | Yes | Infra cost only |
