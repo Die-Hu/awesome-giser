@@ -102,6 +102,7 @@ Essential QGIS plugins that extend its capabilities significantly. Install via *
 | QGIS Hub Plugin Manager | Discover community styles, models, scripts | Community | Centralised access to shared resources |
 | MapSwipe Tool | Side-by-side / swipe comparison of layers | Visualization | Compare before/after imagery or classification results |
 | Point Sampling Tool | Extract raster values at point locations | Analysis | Sample multi-band rasters to point attribute tables |
+| [AI Agent by TerraLab](https://plugins.qgis.org/plugins/AI_Agent/) | Carry out plain-English GIS tasks with an AI agent | AI Assistant | Finds open data, runs Processing tools, styles the map, one-click undo. GPL-2.0-or-later plugin; the AI runs on TerraLab's hosted service, free tier and paid plan; answers can be wrong |
 
 ## Getting Started Recommendations
 
