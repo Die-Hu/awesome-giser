@@ -127,3 +127,9 @@ Specialized vector datasets organized by theme.
 | Meta High Resolution Settlement Layer | Global (30m) | GeoTIFF, CSV | CC BY 4.0 | [data.humdata.org](https://data.humdata.org/organization/facebook) | Free / SOTA |
 | GPW v4 (Gridded Population of the World) | Global (~1km) | GeoTIFF, NetCDF | CC BY 4.0 | [SEDAC](https://sedac.ciesin.columbia.edu/data/collection/gpw-v4) | Free |
 | GHS-POP (Global Human Settlement) | Global (100m-1km) | GeoTIFF | CC BY 4.0 | [ghsl.jrc.ec.europa.eu](https://ghsl.jrc.ec.europa.eu) | Free |
+
+### Cultural & Live-Music Venues
+
+| Dataset | Coverage | Format | License | URL | Label |
+|---------|----------|--------|---------|-----|-------|
+| No Stairs Please | North America (US, DC, BC) | Web Map, MCP, JSON | Public Directory | [nostairsplease.com](https://nostairsplease.com/) | Free / Freemium |
